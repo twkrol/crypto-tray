@@ -22,15 +22,11 @@ use tray_icon::{
 /// fetch the full set even if only a subset is enabled — one HTTP request
 /// keeps the rate-limit budget tiny, and CoinGecko's response is still
 /// only ~5 KB even for 30 coins.
-fn coingecko_simple_price_url() -> String {
-    let ids = COINS
-        .iter()
-        .map(|c| c.id)
-        .collect::<Vec<_>>()
-        .join(",");
+fn coingecko_simple_price_url(ids: &[String]) -> String {
+    let joined = ids.join(",");
     format!(
         "https://api.coingecko.com/api/v3/simple/price\
-         ?ids={ids}&vs_currencies=usd,pln&include_24hr_change=true"
+         ?ids={joined}&vs_currencies=usd,pln&include_24hr_change=true"
     )
 }
 const APP_NAME: &str = "Crypto Tray";
@@ -97,58 +93,18 @@ const THEME_LIGHT: Theme = Theme {
     down: 0x00_C6_28_28,
 };
 
+/// Runtime coin metadata. Owned strings because the catalog is fetched
+/// dynamically from CoinGecko at startup (~15k entries) — we can't put it in
+/// a `&'static` table.
+#[derive(Clone, Debug)]
 struct CoinMeta {
-    id: &'static str,
-    ticker: &'static str,
-    name: &'static str,
-    letter: &'static str,
+    id: String,
+    ticker: String,
+    name: String,
+    letter: String,
     color_dark: u32,
     color_light: u32,
 }
-
-/// Curated list of supported cryptocurrencies. The first four (BTC, ETH, XMR,
-/// KAS) are the application's default favourites; everything else can be
-/// opted into via the picker window. Colours use brand identity where I knew
-/// them; fallbacks are deliberately varied so the AA circle + letter icon
-/// stays distinguishable when a real CoinGecko icon hasn't downloaded yet.
-const COINS: &[CoinMeta] = &[
-    // --- Default favourites ----------------------------------------------
-    CoinMeta { id: "bitcoin",         ticker: "BTC",  name: "Bitcoin",          letter: "B", color_dark: 0x00_F7_93_1A, color_light: 0x00_C7_72_0A },
-    CoinMeta { id: "ethereum",        ticker: "ETH",  name: "Ethereum",         letter: "E", color_dark: 0x00_62_7E_EA, color_light: 0x00_42_51_A0 },
-    CoinMeta { id: "monero",          ticker: "XMR",  name: "Monero",           letter: "M", color_dark: 0x00_FF_66_00, color_light: 0x00_CC_55_00 },
-    CoinMeta { id: "kaspa",           ticker: "KAS",  name: "Kaspa",            letter: "K", color_dark: 0x00_70_C7_BA, color_light: 0x00_2A_8A_7E },
-    // --- Other supported coins (not enabled by default) ------------------
-    CoinMeta { id: "tether",          ticker: "USDT", name: "Tether",           letter: "T", color_dark: 0x00_26_A1_7B, color_light: 0x00_1E_82_5F },
-    CoinMeta { id: "binancecoin",     ticker: "BNB",  name: "BNB",              letter: "B", color_dark: 0x00_F3_BA_2F, color_light: 0x00_C2_94_21 },
-    CoinMeta { id: "solana",          ticker: "SOL",  name: "Solana",           letter: "S", color_dark: 0x00_9B_4D_FC, color_light: 0x00_7A_3D_C9 },
-    CoinMeta { id: "ripple",          ticker: "XRP",  name: "XRP",              letter: "X", color_dark: 0x00_22_99_CD, color_light: 0x00_1A_7A_A4 },
-    CoinMeta { id: "usd-coin",        ticker: "USDC", name: "USD Coin",         letter: "U", color_dark: 0x00_27_77_C9, color_light: 0x00_1E_5F_A1 },
-    CoinMeta { id: "cardano",         ticker: "ADA",  name: "Cardano",          letter: "A", color_dark: 0x00_0D_33_AB, color_light: 0x00_0A_27_88 },
-    CoinMeta { id: "dogecoin",        ticker: "DOGE", name: "Dogecoin",         letter: "D", color_dark: 0x00_C2_A6_33, color_light: 0x00_9B_85_29 },
-    CoinMeta { id: "tron",            ticker: "TRX",  name: "TRON",             letter: "T", color_dark: 0x00_EB_00_29, color_light: 0x00_BC_00_21 },
-    CoinMeta { id: "avalanche-2",     ticker: "AVAX", name: "Avalanche",        letter: "A", color_dark: 0x00_E8_41_42, color_light: 0x00_BA_34_35 },
-    CoinMeta { id: "chainlink",       ticker: "LINK", name: "Chainlink",        letter: "L", color_dark: 0x00_24_5A_E2, color_light: 0x00_1B_48_B5 },
-    CoinMeta { id: "polkadot",        ticker: "DOT",  name: "Polkadot",         letter: "D", color_dark: 0x00_E6_00_7A, color_light: 0x00_B8_00_62 },
-    CoinMeta { id: "litecoin",        ticker: "LTC",  name: "Litecoin",         letter: "L", color_dark: 0x00_BF_BB_BB, color_light: 0x00_88_88_88 },
-    CoinMeta { id: "bitcoin-cash",    ticker: "BCH",  name: "Bitcoin Cash",     letter: "B", color_dark: 0x00_8D_C3_51, color_light: 0x00_70_9C_41 },
-    CoinMeta { id: "internet-computer", ticker: "ICP", name: "Internet Computer", letter: "I", color_dark: 0x00_29_AB_E2, color_light: 0x00_21_88_B5 },
-    CoinMeta { id: "near",            ticker: "NEAR", name: "NEAR Protocol",    letter: "N", color_dark: 0x00_42_85_F4, color_light: 0x00_34_6A_C3 },
-    CoinMeta { id: "uniswap",         ticker: "UNI",  name: "Uniswap",          letter: "U", color_dark: 0x00_FF_00_7A, color_light: 0x00_CC_00_62 },
-    CoinMeta { id: "ethereum-classic", ticker: "ETC", name: "Ethereum Classic", letter: "E", color_dark: 0x00_32_8E_30, color_light: 0x00_28_71_27 },
-    CoinMeta { id: "stellar",         ticker: "XLM",  name: "Stellar",          letter: "X", color_dark: 0x00_47_4A_6B, color_light: 0x00_2A_2B_3C },
-    CoinMeta { id: "cosmos",          ticker: "ATOM", name: "Cosmos",           letter: "A", color_dark: 0x00_6F_7A_F0, color_light: 0x00_4C_57_BD },
-    CoinMeta { id: "filecoin",        ticker: "FIL",  name: "Filecoin",         letter: "F", color_dark: 0x00_00_90_FF, color_light: 0x00_00_73_CC },
-    CoinMeta { id: "vechain",         ticker: "VET",  name: "VeChain",          letter: "V", color_dark: 0x00_15_BD_FF, color_light: 0x00_10_97_CC },
-    CoinMeta { id: "the-graph",       ticker: "GRT",  name: "The Graph",        letter: "G", color_dark: 0x00_6F_47_FF, color_light: 0x00_5A_3A_D0 },
-    CoinMeta { id: "aave",            ticker: "AAVE", name: "Aave",             letter: "A", color_dark: 0x00_B6_50_9E, color_light: 0x00_92_3F_7E },
-    CoinMeta { id: "maker",           ticker: "MKR",  name: "Maker",            letter: "M", color_dark: 0x00_1A_AB_9B, color_light: 0x00_14_88_7C },
-    CoinMeta { id: "algorand",        ticker: "ALGO", name: "Algorand",         letter: "A", color_dark: 0x00_70_75_8F, color_light: 0x00_4A_4F_6A },
-    CoinMeta { id: "tezos",           ticker: "XTZ",  name: "Tezos",            letter: "T", color_dark: 0x00_2C_7D_F7, color_light: 0x00_22_64_C5 },
-];
-
-/// CoinGecko ids of the default-favourite coins (used when there's no
-/// `coins.txt` config file yet, e.g. on first run).
-const DEFAULT_FAVOURITES: &[&str] = &["bitcoin", "ethereum", "monero", "kaspa"];
 
 impl CoinMeta {
     fn color(&self, dark: bool) -> u32 {
@@ -158,6 +114,265 @@ impl CoinMeta {
             self.color_light
         }
     }
+}
+
+/// Compile-time table of "known" coins — brand-accurate colours and letters
+/// for the most recognisable cryptos. When the full catalog from CoinGecko's
+/// `/coins/list` is in memory, hits in this table override the palette-derived
+/// fallback so e.g. Bitcoin always renders in its trademark orange even though
+/// it sits among thousands of other coins.
+struct BuiltinCoin {
+    id: &'static str,
+    letter: &'static str,
+    color_dark: u32,
+    color_light: u32,
+}
+
+const BUILTIN_COINS: &[BuiltinCoin] = &[
+    BuiltinCoin { id: "bitcoin",         letter: "B", color_dark: 0x00_F7_93_1A, color_light: 0x00_C7_72_0A },
+    BuiltinCoin { id: "ethereum",        letter: "E", color_dark: 0x00_62_7E_EA, color_light: 0x00_42_51_A0 },
+    BuiltinCoin { id: "monero",          letter: "M", color_dark: 0x00_FF_66_00, color_light: 0x00_CC_55_00 },
+    BuiltinCoin { id: "kaspa",           letter: "K", color_dark: 0x00_70_C7_BA, color_light: 0x00_2A_8A_7E },
+    BuiltinCoin { id: "tether",          letter: "T", color_dark: 0x00_26_A1_7B, color_light: 0x00_1E_82_5F },
+    BuiltinCoin { id: "binancecoin",     letter: "B", color_dark: 0x00_F3_BA_2F, color_light: 0x00_C2_94_21 },
+    BuiltinCoin { id: "solana",          letter: "S", color_dark: 0x00_9B_4D_FC, color_light: 0x00_7A_3D_C9 },
+    BuiltinCoin { id: "ripple",          letter: "X", color_dark: 0x00_22_99_CD, color_light: 0x00_1A_7A_A4 },
+    BuiltinCoin { id: "usd-coin",        letter: "U", color_dark: 0x00_27_77_C9, color_light: 0x00_1E_5F_A1 },
+    BuiltinCoin { id: "cardano",         letter: "A", color_dark: 0x00_0D_33_AB, color_light: 0x00_0A_27_88 },
+    BuiltinCoin { id: "dogecoin",        letter: "D", color_dark: 0x00_C2_A6_33, color_light: 0x00_9B_85_29 },
+    BuiltinCoin { id: "tron",            letter: "T", color_dark: 0x00_EB_00_29, color_light: 0x00_BC_00_21 },
+    BuiltinCoin { id: "avalanche-2",     letter: "A", color_dark: 0x00_E8_41_42, color_light: 0x00_BA_34_35 },
+    BuiltinCoin { id: "chainlink",       letter: "L", color_dark: 0x00_24_5A_E2, color_light: 0x00_1B_48_B5 },
+    BuiltinCoin { id: "polkadot",        letter: "D", color_dark: 0x00_E6_00_7A, color_light: 0x00_B8_00_62 },
+    BuiltinCoin { id: "litecoin",        letter: "L", color_dark: 0x00_BF_BB_BB, color_light: 0x00_88_88_88 },
+    BuiltinCoin { id: "bitcoin-cash",    letter: "B", color_dark: 0x00_8D_C3_51, color_light: 0x00_70_9C_41 },
+    BuiltinCoin { id: "internet-computer", letter: "I", color_dark: 0x00_29_AB_E2, color_light: 0x00_21_88_B5 },
+    BuiltinCoin { id: "near",            letter: "N", color_dark: 0x00_42_85_F4, color_light: 0x00_34_6A_C3 },
+    BuiltinCoin { id: "uniswap",         letter: "U", color_dark: 0x00_FF_00_7A, color_light: 0x00_CC_00_62 },
+    BuiltinCoin { id: "ethereum-classic", letter: "E", color_dark: 0x00_32_8E_30, color_light: 0x00_28_71_27 },
+    BuiltinCoin { id: "stellar",         letter: "X", color_dark: 0x00_47_4A_6B, color_light: 0x00_2A_2B_3C },
+    BuiltinCoin { id: "cosmos",          letter: "A", color_dark: 0x00_6F_7A_F0, color_light: 0x00_4C_57_BD },
+    BuiltinCoin { id: "filecoin",        letter: "F", color_dark: 0x00_00_90_FF, color_light: 0x00_00_73_CC },
+    BuiltinCoin { id: "vechain",         letter: "V", color_dark: 0x00_15_BD_FF, color_light: 0x00_10_97_CC },
+    BuiltinCoin { id: "the-graph",       letter: "G", color_dark: 0x00_6F_47_FF, color_light: 0x00_5A_3A_D0 },
+    BuiltinCoin { id: "aave",            letter: "A", color_dark: 0x00_B6_50_9E, color_light: 0x00_92_3F_7E },
+    BuiltinCoin { id: "maker",           letter: "M", color_dark: 0x00_1A_AB_9B, color_light: 0x00_14_88_7C },
+    BuiltinCoin { id: "algorand",        letter: "A", color_dark: 0x00_70_75_8F, color_light: 0x00_4A_4F_6A },
+    BuiltinCoin { id: "tezos",           letter: "T", color_dark: 0x00_2C_7D_F7, color_light: 0x00_22_64_C5 },
+];
+
+/// CoinGecko ids of the default-favourite coins (used when there's no
+/// `coins.txt` config file yet, e.g. on first run).
+const DEFAULT_FAVOURITES: &[&str] = &["bitcoin", "ethereum", "monero", "kaspa"];
+
+/// Palette used when a coin isn't in BUILTIN_COINS. A simple hash of the id
+/// picks one of these slots; deterministic so the same coin always gets the
+/// same colour across launches.
+const PALETTE_DARK: &[u32] = &[
+    0x00_F7_93_1A, 0x00_62_7E_EA, 0x00_FF_66_00, 0x00_70_C7_BA,
+    0x00_F3_BA_2F, 0x00_9B_4D_FC, 0x00_22_99_CD, 0x00_27_77_C9,
+    0x00_C2_A6_33, 0x00_24_5A_E2, 0x00_E6_00_7A, 0x00_E8_41_42,
+    0x00_8D_C3_51, 0x00_FF_00_7A, 0x00_47_4A_6B, 0x00_6F_7A_F0,
+];
+const PALETTE_LIGHT: &[u32] = &[
+    0x00_C7_72_0A, 0x00_42_51_A0, 0x00_CC_55_00, 0x00_2A_8A_7E,
+    0x00_C2_94_21, 0x00_7A_3D_C9, 0x00_1A_7A_A4, 0x00_1E_5F_A1,
+    0x00_9B_85_29, 0x00_1B_48_B5, 0x00_B8_00_62, 0x00_BA_34_35,
+    0x00_70_9C_41, 0x00_CC_00_62, 0x00_2A_2B_3C, 0x00_4C_57_BD,
+];
+
+fn palette_for_id(id: &str) -> (u32, u32) {
+    // djb2-ish accumulating hash, then modulo palette size.
+    let h: u32 = id
+        .bytes()
+        .fold(5381u32, |acc, b| acc.wrapping_mul(33).wrapping_add(b as u32));
+    let i = (h as usize) % PALETTE_DARK.len();
+    (PALETTE_DARK[i], PALETTE_LIGHT[i])
+}
+
+/// Build a CoinMeta from raw id/symbol/name. Uses BUILTIN_COINS for brand
+/// colours/letter when the id matches a known entry; otherwise falls back to
+/// a palette colour and the first character of the ticker.
+fn make_coin_meta(id: String, ticker: String, name: String) -> CoinMeta {
+    if let Some(b) = BUILTIN_COINS.iter().find(|b| b.id == id) {
+        CoinMeta {
+            id,
+            ticker,
+            name,
+            letter: b.letter.to_string(),
+            color_dark: b.color_dark,
+            color_light: b.color_light,
+        }
+    } else {
+        let letter = ticker
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_uppercase().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        let (color_dark, color_light) = palette_for_id(&id);
+        CoinMeta {
+            id,
+            ticker,
+            name,
+            letter,
+            color_dark,
+            color_light,
+        }
+    }
+}
+
+/// The runtime coin catalog. Populated once during startup — either from the
+/// cached TSV file or from a fresh CoinGecko fetch — and read-only thereafter
+/// (refresh happens out-of-process, so changes only take effect on next launch).
+static COIN_CATALOG: OnceLock<Vec<CoinMeta>> = OnceLock::new();
+
+fn coins() -> &'static [CoinMeta] {
+    COIN_CATALOG
+        .get()
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+fn coin_by_id(id: &str) -> Option<&'static CoinMeta> {
+    coins().iter().find(|c| c.id == id)
+}
+
+#[derive(Deserialize)]
+struct CoinListEntry {
+    id: String,
+    symbol: String,
+    name: String,
+}
+
+fn coin_catalog_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(|d| PathBuf::from(d).join("CryptoTray").join("coin_catalog.txt"))
+}
+
+/// Fetch every coin known to CoinGecko (~15 000 entries, ~2 MB JSON).
+/// Returns None on any HTTP / parse failure — the caller falls back to
+/// either an on-disk cache or to BUILTIN_COINS.
+fn fetch_coin_catalog() -> Option<Vec<CoinMeta>> {
+    let resp = ureq::get("https://api.coingecko.com/api/v3/coins/list")
+        .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(30))
+        .call()
+        .ok()?;
+    let entries: Vec<CoinListEntry> = resp.into_json().ok()?;
+    let mut metas: Vec<CoinMeta> = entries
+        .into_iter()
+        .map(|e| make_coin_meta(e.id, e.symbol.to_uppercase(), e.name))
+        .collect();
+    // Alphabetical by name — the picker has a text-search box, so list order
+    // mostly matters when the search is empty.
+    metas.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Some(metas)
+}
+
+fn save_coin_catalog(metas: &[CoinMeta]) {
+    if let Some(path) = coin_catalog_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Plain TSV: id<TAB>ticker<TAB>name per line. Keeps parsing trivial
+        // and avoids adding a JSON serializer just for one file.
+        let mut content = String::with_capacity(metas.len() * 40);
+        for m in metas {
+            content.push_str(&m.id);
+            content.push('\t');
+            content.push_str(&m.ticker);
+            content.push('\t');
+            content.push_str(&m.name);
+            content.push('\n');
+        }
+        let _ = std::fs::write(&path, content);
+    }
+}
+
+fn load_coin_catalog() -> Option<Vec<CoinMeta>> {
+    let path = coin_catalog_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let metas: Vec<CoinMeta> = content
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let id = parts.next()?.to_string();
+            let ticker = parts.next()?.to_string();
+            let name = parts.next()?.to_string();
+            if id.is_empty() || ticker.is_empty() || name.is_empty() {
+                return None;
+            }
+            Some(make_coin_meta(id, ticker, name))
+        })
+        .collect();
+    if metas.is_empty() {
+        None
+    } else {
+        Some(metas)
+    }
+}
+
+fn coin_catalog_age_days() -> Option<u64> {
+    let path = coin_catalog_path()?;
+    let meta = std::fs::metadata(&path).ok()?;
+    let modified = meta.modified().ok()?;
+    modified.elapsed().ok().map(|d| d.as_secs() / 86_400)
+}
+
+/// Fallback catalog: just the curated BUILTIN_COINS list. Used only when
+/// both the disk cache and the network fetch fail — the picker will work,
+/// just without the 15 000-coin long tail.
+fn builtin_catalog() -> Vec<CoinMeta> {
+    BUILTIN_COINS
+        .iter()
+        .map(|b| {
+            // Slightly fake but workable ticker/name for the fallback path —
+            // we don't store these on BuiltinCoin to avoid duplication.
+            make_coin_meta(
+                b.id.to_string(),
+                b.id.split('-').next().unwrap_or(b.id).to_uppercase(),
+                b.id.replace('-', " ")
+                    .split_whitespace()
+                    .map(|w| {
+                        let mut cs = w.chars();
+                        match cs.next() {
+                            Some(c) => c.to_uppercase().collect::<String>() + cs.as_str(),
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        })
+        .collect()
+}
+
+/// Resolve a usable coin catalog at startup. Order of preference:
+///   1. cached TSV on disk (instant load), refresh in background if >7 days old
+///   2. fresh fetch from CoinGecko `/coins/list`
+///   3. tiny BUILTIN_COINS fallback (offline first run)
+fn init_coin_catalog() {
+    if let Some(cached) = load_coin_catalog() {
+        let _ = COIN_CATALOG.set(cached);
+        // Background refresh when stale — won't take effect until next launch
+        // (OnceLock can only be set once), but keeps the disk file fresh.
+        let age = coin_catalog_age_days().unwrap_or(u64::MAX);
+        if age > 7 {
+            std::thread::spawn(|| {
+                if let Some(fresh) = fetch_coin_catalog() {
+                    save_coin_catalog(&fresh);
+                }
+            });
+        }
+        return;
+    }
+    if let Some(fresh) = fetch_coin_catalog() {
+        save_coin_catalog(&fresh);
+        let _ = COIN_CATALOG.set(fresh);
+        return;
+    }
+    let _ = COIN_CATALOG.set(builtin_catalog());
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -179,8 +394,11 @@ struct AppState {
     last_update: Arc<Mutex<Option<Instant>>>,
 }
 
-fn fetch_price() -> Result<Prices, String> {
-    let url = coingecko_simple_price_url();
+fn fetch_price(ids: &[String]) -> Result<Prices, String> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let url = coingecko_simple_price_url(ids);
     let resp = ureq::get(&url)
         .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/json")
@@ -254,10 +472,13 @@ fn format_price_message(
 
     match data.as_ref() {
         Some(Ok(p)) => {
-            let blocks: Vec<String> = COINS
+            let blocks: Vec<String> = coins()
                 .iter()
-                .filter(|c| enabled.contains(c.id))
-                .filter_map(|c| p.get(c.id).map(|d| format_coin_block(c.name, c.ticker, d)))
+                .filter(|c| enabled.contains(&c.id))
+                .filter_map(|c| {
+                    p.get(&c.id)
+                        .map(|d| format_coin_block(&c.name, &c.ticker, d))
+                })
                 .collect();
             if blocks.is_empty() {
                 match lang() {
@@ -319,10 +540,10 @@ fn format_tooltip(state: &AppState, enabled: &HashSet<String>) -> String {
     let data = state.data.lock().unwrap();
     match data.as_ref() {
         Some(Ok(p)) => {
-            let lines: Vec<String> = COINS
+            let lines: Vec<String> = coins()
                 .iter()
-                .filter(|c| enabled.contains(c.id))
-                .filter_map(|c| p.get(c.id).map(|d| (c, d)))
+                .filter(|c| enabled.contains(&c.id))
+                .filter_map(|c| p.get(&c.id).map(|d| (c, d)))
                 .map(|(c, d)| {
                     format!(
                         "{}: ${} ({})",
@@ -482,12 +703,9 @@ fn save_enabled_coins(enabled: &HashSet<String>) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        // Preserve canonical order from COINS so the file is stable on disk.
-        let mut lines: Vec<&str> = COINS
-            .iter()
-            .filter(|c| enabled.contains(c.id))
-            .map(|c| c.id)
-            .collect();
+        // Sort alphabetically so the file is stable on disk regardless of
+        // the order checkboxes were toggled in the picker.
+        let mut lines: Vec<String> = enabled.iter().cloned().collect();
         lines.sort();
         let _ = std::fs::write(&path, lines.join("\n"));
     }
@@ -637,16 +855,15 @@ struct CoinGeckoMarket {
     image: String,
 }
 
-fn fetch_icon_urls() -> HashMap<String, String> {
-    let ids = COINS
-        .iter()
-        .map(|c| c.id)
-        .collect::<Vec<_>>()
-        .join(",");
-    let url = format!(
-        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={ids}"
-    );
+fn fetch_icon_urls(ids: &[String]) -> HashMap<String, String> {
     let mut map = HashMap::new();
+    if ids.is_empty() {
+        return map;
+    }
+    let joined = ids.join(",");
+    let url = format!(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={joined}"
+    );
     if let Ok(resp) = ureq::get(&url)
         .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(10))
@@ -781,14 +998,18 @@ fn resize_rgba_bilinear(
     out
 }
 
-fn load_icons(target_size: u32) -> HashMap<String, IconImage> {
+fn load_icons(ids: &[String], target_size: u32) -> HashMap<String, IconImage> {
     let mut map = HashMap::new();
+    if ids.is_empty() {
+        return map;
+    }
 
     // First pass: figure out which icons aren't on disk yet so we only hit
-    // the network if needed.
+    // the network if at least one is missing. Catalog can be huge (~15 k
+    // coins), but we only ever ask for icons of the enabled set (usually < 10).
     let mut needs_network = false;
-    for coin in COINS {
-        match icon_cache_path(coin.id) {
+    for id in ids {
+        match icon_cache_path(id) {
             Some(p) if p.exists() => {}
             _ => {
                 needs_network = true;
@@ -798,18 +1019,18 @@ fn load_icons(target_size: u32) -> HashMap<String, IconImage> {
     }
 
     let urls = if needs_network {
-        fetch_icon_urls()
+        fetch_icon_urls(ids)
     } else {
         HashMap::new()
     };
 
-    for coin in COINS {
+    for id in ids {
         let bytes = (|| -> Option<Vec<u8>> {
-            let path = icon_cache_path(coin.id)?;
+            let path = icon_cache_path(id)?;
             if let Ok(b) = std::fs::read(&path) {
                 return Some(b);
             }
-            let url = urls.get(coin.id)?;
+            let url = urls.get(id.as_str())?;
             let bytes = download_url(url)?;
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -823,7 +1044,7 @@ fn load_icons(target_size: u32) -> HashMap<String, IconImage> {
                 let resized =
                     resize_rgba_bilinear(&rgba, w, h, target_size, target_size);
                 map.insert(
-                    coin.id.to_string(),
+                    id.clone(),
                     IconImage {
                         width: target_size,
                         height: target_size,
@@ -841,11 +1062,14 @@ fn load_icons(target_size: u32) -> HashMap<String, IconImage> {
 /// Returns a partial map of coins where fetch+decode succeeded — failed ones
 /// are simply absent so the caller can merge into existing state without
 /// wiping working icons.
-fn force_refetch_icons(target_size: u32) -> HashMap<String, IconImage> {
+fn force_refetch_icons(ids: &[String], target_size: u32) -> HashMap<String, IconImage> {
     let mut map = HashMap::new();
-    let urls = fetch_icon_urls();
-    for coin in COINS {
-        let Some(url) = urls.get(coin.id) else {
+    if ids.is_empty() {
+        return map;
+    }
+    let urls = fetch_icon_urls(ids);
+    for id in ids {
+        let Some(url) = urls.get(id.as_str()) else {
             continue;
         };
         let Some(bytes) = download_url(url) else {
@@ -853,7 +1077,7 @@ fn force_refetch_icons(target_size: u32) -> HashMap<String, IconImage> {
         };
         // Persist before decoding so a successful download is cached even
         // if our decoder rejects an unusual PNG variant.
-        if let Some(path) = icon_cache_path(coin.id) {
+        if let Some(path) = icon_cache_path(id) {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -863,7 +1087,7 @@ fn force_refetch_icons(target_size: u32) -> HashMap<String, IconImage> {
             let resized =
                 resize_rgba_bilinear(&rgba, w, h, target_size, target_size);
             map.insert(
-                coin.id.to_string(),
+                id.clone(),
                 IconImage {
                     width: target_size,
                     height: target_size,
@@ -954,42 +1178,52 @@ fn fetch_chart(id: &str) -> Option<Vec<f64>> {
     Some(parsed.prices.into_iter().map(|p| p[1]).collect())
 }
 
-fn spawn_chart_thread(charts: ChartData, dirty: Arc<AtomicBool>) {
-    // One thread per coin. Layered stagger:
-    //   - The four default favourites start almost immediately (0/200/400/600 ms)
-    //     so the visible widget gets its sparklines populated within ~1 s,
-    //     same as the previous 4-coin behaviour.
-    //   - The remaining coins start at 30 s, 60 s, 90 s… so the initial burst
-    //     stays under CoinGecko's per-minute rate cap and a freshly-enabled
-    //     coin gets its sparkline within ~15 min at worst (often much sooner
-    //     because its thread has already cycled past its initial wait).
-    // After the initial wait each thread runs its own 15-min cycle and falls
-    // back to a 30 s retry on failure (network blip / rate limit).
-    let default_count = DEFAULT_FAVOURITES.len();
-    for (idx, coin) in COINS.iter().enumerate() {
-        let charts = charts.clone();
-        let dirty = dirty.clone();
-        let coin_id = coin.id.to_string();
-        let initial_wait = if idx < default_count {
-            Duration::from_millis((idx as u64) * 200)
-        } else {
-            Duration::from_secs(((idx - default_count) as u64 + 1) * 30)
-        };
-        std::thread::spawn(move || {
-            std::thread::sleep(initial_wait);
-            loop {
-                if let Some(points) = fetch_chart(&coin_id) {
+fn spawn_chart_thread(
+    charts: ChartData,
+    dirty: Arc<AtomicBool>,
+    enabled: Arc<Mutex<HashSet<String>>>,
+) {
+    // Single centralised loop now that the catalog can hold ~15 k coins —
+    // one thread per coin is no longer realistic. Each pass:
+    //   1. snapshot the currently-enabled set,
+    //   2. fetch a chart for each coin not yet in `charts` immediately,
+    //      otherwise once it's older than ~15 min,
+    //   3. pause between requests so we don't burst the rate limit.
+    // Newly-enabled coins get their first sparkline within ~200 ms × index.
+    std::thread::spawn(move || {
+        let mut last_fetch: HashMap<String, Instant> = HashMap::new();
+        let stale_after = Duration::from_secs(900); // 15 min
+        loop {
+            let snapshot: Vec<String> = enabled
+                .lock()
+                .ok()
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            for coin_id in &snapshot {
+                let needs = last_fetch
+                    .get(coin_id)
+                    .map(|t| t.elapsed() >= stale_after)
+                    .unwrap_or(true);
+                if !needs {
+                    continue;
+                }
+                if let Some(points) = fetch_chart(coin_id) {
                     if let Ok(mut c) = charts.lock() {
                         c.insert(coin_id.clone(), points);
                     }
                     dirty.store(true, Ordering::Relaxed);
-                    std::thread::sleep(Duration::from_secs(900));
-                } else {
-                    std::thread::sleep(Duration::from_secs(30));
+                    last_fetch.insert(coin_id.clone(), Instant::now());
                 }
+                // Stagger requests inside a pass — keeps initial burst under
+                // CoinGecko's per-minute cap regardless of enabled-set size.
+                std::thread::sleep(Duration::from_millis(200));
             }
-        });
-    }
+            // Breathing room before re-checking. The pass itself runs quickly
+            // because already-fresh coins are skipped, so this is the main
+            // throttle for steady state.
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    });
 }
 
 fn draw_line(
@@ -1542,12 +1776,12 @@ fn render_widget(
         let mut x = PAD_X;
         let space_w = measure_text(mem_dc, "    ");
 
-        for coin in COINS.iter() {
-            if !enabled.contains(coin.id) {
+        for coin in coins().iter() {
+            if !enabled.contains(&coin.id) {
                 continue;
             }
 
-            if let Some(icon) = icons.get(coin.id) {
+            if let Some(icon) = icons.get(&coin.id) {
                 // Real CoinGecko icon — alpha-blend onto DIB.
                 let icon_top = cy - icon_d / 2;
                 blit_icon_alpha(dib_mut, w as usize, h as usize, icon, x, icon_top);
@@ -1587,7 +1821,7 @@ fn render_widget(
 
             // Price + 24h change.
             if let Some(p) = prices {
-                if let Some(c) = p.get(coin.id) {
+                if let Some(c) = p.get(&coin.id) {
                     x = draw_segment(
                         mem_dc,
                         x,
@@ -1614,7 +1848,7 @@ fn render_widget(
             if show_charts {
                 x += 8;
                 if let Some(charts_map) = charts_lock.as_ref() {
-                    if let Some(points) = charts_map.get(coin.id) {
+                    if let Some(points) = charts_map.get(&coin.id) {
                         let line_color = match (points.first(), points.last()) {
                             (Some(&first), Some(&last)) if last > first => theme.up,
                             (Some(&first), Some(&last)) if last < first => theme.down,
@@ -1660,11 +1894,14 @@ fn render_widget(
 const PICKER_WIDTH: u32 = 400;
 const PICKER_HEIGHT: u32 = 540;
 const PICKER_HEADER_H: i32 = 44;
+const PICKER_SEARCH_H: i32 = 40;
 const PICKER_FOOTER_H: i32 = 56;
 const PICKER_ROW_H: i32 = 30;
 const PICKER_PAD_X: i32 = 14;
 const PICKER_CHECKBOX: i32 = 18;
 const PICKER_TICKER_W: i32 = 60;
+/// y-coordinate where the scrollable list area starts.
+const PICKER_LIST_TOP: i32 = PICKER_HEADER_H + PICKER_SEARCH_H;
 
 /// Result of a picker open/close cycle, shared between the picker window and
 /// the main event loop. When the user clicks "OK" the new HashSet lands in
@@ -1678,6 +1915,13 @@ struct Picker {
     /// Draft selection — mutated by clicks before being committed on OK.
     selected: HashSet<String>,
     scroll: i32,
+    /// Live search query (case-insensitive, matches name or ticker).
+    search: String,
+    /// Indices into `coins()` for rows currently matching `search`. Rebuilt
+    /// on every keystroke so render and hit-test just iterate this slice.
+    filtered: Vec<usize>,
+    /// Hover index in *filtered* space, i.e. position within the filtered
+    /// list — not an index into the full catalog.
     hover_index: Option<usize>,
     visible: bool,
     pending_result: PickerResult,
@@ -1714,6 +1958,8 @@ impl Picker {
             surface,
             selected: HashSet::new(),
             scroll: 0,
+            search: String::new(),
+            filtered: (0..coins().len()).collect(),
             hover_index: None,
             visible: false,
             pending_result,
@@ -1727,12 +1973,70 @@ impl Picker {
     fn open(&mut self, current_enabled: &HashSet<String>) {
         self.selected = current_enabled.clone();
         self.scroll = 0;
+        self.search.clear();
+        self.update_filter();
         self.hover_index = None;
         self.window.set_visible(true);
         self.visible = true;
         // Pull to front in case it's already on screen behind something.
         let _ = self.window.set_focus();
         self.window.request_redraw();
+    }
+
+    /// Rebuild `filtered` from the current `search` string. Case-insensitive
+    /// substring match against name and ticker. Empty query => full catalog.
+    fn update_filter(&mut self) {
+        if self.search.is_empty() {
+            self.filtered = (0..coins().len()).collect();
+        } else {
+            let q = self.search.to_lowercase();
+            self.filtered = coins()
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    c.name.to_lowercase().contains(&q)
+                        || c.ticker.to_lowercase().contains(&q)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        // Clamp scroll within new bounds.
+        let max = self.max_scroll();
+        if self.scroll > max {
+            self.scroll = max;
+        }
+    }
+
+    fn search_append(&mut self, s: &str) {
+        let mut changed = false;
+        for ch in s.chars() {
+            if !ch.is_control() {
+                self.search.push(ch);
+                changed = true;
+            }
+        }
+        if changed {
+            self.scroll = 0;
+            self.update_filter();
+            self.window.request_redraw();
+        }
+    }
+
+    fn search_backspace(&mut self) {
+        if self.search.pop().is_some() {
+            self.scroll = 0;
+            self.update_filter();
+            self.window.request_redraw();
+        }
+    }
+
+    fn search_clear(&mut self) {
+        if !self.search.is_empty() {
+            self.search.clear();
+            self.scroll = 0;
+            self.update_filter();
+            self.window.request_redraw();
+        }
     }
 
     fn close_save(&mut self) {
@@ -1751,17 +2055,20 @@ impl Picker {
 
     fn visible_rows(&self) -> i32 {
         let size = self.window.inner_size();
-        let avail = size.height as i32 - PICKER_HEADER_H - PICKER_FOOTER_H;
+        let avail = size.height as i32 - PICKER_LIST_TOP - PICKER_FOOTER_H;
         (avail / PICKER_ROW_H).max(1)
     }
 
     fn max_scroll(&self) -> i32 {
-        let total = COINS.len() as i32;
+        let total = self.filtered.len() as i32;
         (total - self.visible_rows()).max(0)
     }
 
+    /// Returns index into the *filtered* list (not the full catalog) for the
+    /// row under the cursor. Caller looks the catalog entry up via
+    /// `self.filtered[idx]`.
     fn hit_row(&self, _x: i32, y: i32) -> Option<usize> {
-        if y < PICKER_HEADER_H {
+        if y < PICKER_LIST_TOP {
             return None;
         }
         let size = self.window.inner_size();
@@ -1769,9 +2076,9 @@ impl Picker {
         if y >= list_bottom {
             return None;
         }
-        let row = ((y - PICKER_HEADER_H) / PICKER_ROW_H) as usize;
+        let row = ((y - PICKER_LIST_TOP) / PICKER_ROW_H) as usize;
         let idx = row as i32 + self.scroll;
-        if idx >= 0 && (idx as usize) < COINS.len() {
+        if idx >= 0 && (idx as usize) < self.filtered.len() {
             Some(idx as usize)
         } else {
             None
@@ -1794,8 +2101,9 @@ impl Picker {
             self.close_save();
             return;
         }
-        if let Some(idx) = self.hit_row(x, y) {
-            let id = COINS[idx].id.to_string();
+        if let Some(filt_idx) = self.hit_row(x, y) {
+            let coin_idx = self.filtered[filt_idx];
+            let id = coins()[coin_idx].id.clone();
             if self.selected.contains(&id) {
                 self.selected.remove(&id);
             } else {
@@ -1839,6 +2147,8 @@ impl Picker {
             w,
             h,
             &self.selected,
+            &self.search,
+            &self.filtered,
             self.scroll,
             self.hover_index,
             theme,
@@ -1855,6 +2165,8 @@ fn render_picker_dib(
     w: u32,
     h: u32,
     selected: &HashSet<String>,
+    search: &str,
+    filtered: &[usize],
     scroll: i32,
     hover_index: Option<usize>,
     theme: Theme,
@@ -1941,7 +2253,7 @@ fn render_picker_dib(
         if let Some(idx) = hover_index {
             let row_idx_in_view = idx as i32 - scroll;
             if row_idx_in_view >= 0 {
-                let y = PICKER_HEADER_H + row_idx_in_view * PICKER_ROW_H;
+                let y = PICKER_LIST_TOP + row_idx_in_view * PICKER_ROW_H;
                 if y + PICKER_ROW_H <= h as i32 - PICKER_FOOTER_H {
                     let hover_brush = CreateSolidBrush(rgb_to_colorref(hover_bg));
                     let r = RECT {
@@ -1955,6 +2267,34 @@ fn render_picker_dib(
                 }
             }
         }
+
+        // Search bar background — filled rect across the picker, inset, with
+        // a 1-px border. Text rendered later when the body font is selected.
+        let search_pad = 8;
+        let search_y = PICKER_HEADER_H + search_pad;
+        let search_h = PICKER_SEARCH_H - 2 * search_pad;
+        let search_x0 = PICKER_PAD_X;
+        let search_x1 = w as i32 - PICKER_PAD_X;
+        let search_bg = blend_rgb(theme.bg, theme.text, 0.05);
+        let search_brush = CreateSolidBrush(rgb_to_colorref(search_bg));
+        FillRect(
+            mem_dc,
+            &RECT {
+                left: search_x0,
+                top: search_y,
+                right: search_x1,
+                bottom: search_y + search_h,
+            },
+            search_brush,
+        );
+        DeleteObject(search_brush as _);
+        // 1-px border around the input box (drawn directly to DIB).
+        let dib_for_border =
+            std::slice::from_raw_parts_mut(dib_bits as *mut u32, pixel_count);
+        draw_line(dib_for_border, wu, hu, search_x0, search_y, search_x1 - 1, search_y, border);
+        draw_line(dib_for_border, wu, hu, search_x0, search_y + search_h - 1, search_x1 - 1, search_y + search_h - 1, border);
+        draw_line(dib_for_border, wu, hu, search_x0, search_y, search_x0, search_y + search_h - 1, border);
+        draw_line(dib_for_border, wu, hu, search_x1 - 1, search_y, search_x1 - 1, search_y + search_h - 1, border);
 
         // Top header separator (1 px line).
         let sep_brush = CreateSolidBrush(rgb_to_colorref(border));
@@ -1993,17 +2333,17 @@ fn render_picker_dib(
         // Checkboxes: drawn as filled or empty squares. Drawn directly to DIB.
         let dib_mut =
             std::slice::from_raw_parts_mut(dib_bits as *mut u32, pixel_count);
-        let visible_rows = ((h as i32 - PICKER_HEADER_H - PICKER_FOOTER_H) / PICKER_ROW_H).max(0);
+        let visible_rows = ((h as i32 - PICKER_LIST_TOP - PICKER_FOOTER_H) / PICKER_ROW_H).max(0);
         for row in 0..visible_rows {
-            let coin_idx = scroll + row;
-            if coin_idx < 0 || (coin_idx as usize) >= COINS.len() {
+            let filt_idx = scroll + row;
+            if filt_idx < 0 || (filt_idx as usize) >= filtered.len() {
                 break;
             }
-            let coin = &COINS[coin_idx as usize];
-            let y_row = PICKER_HEADER_H + row * PICKER_ROW_H;
+            let coin = &coins()[filtered[filt_idx as usize]];
+            let y_row = PICKER_LIST_TOP + row * PICKER_ROW_H;
             let cb_x = PICKER_PAD_X;
             let cb_y = y_row + (PICKER_ROW_H - PICKER_CHECKBOX) / 2;
-            let checked = selected.contains(coin.id);
+            let checked = selected.contains(&coin.id);
 
             // Border (1 px rect)
             for px in cb_x..(cb_x + PICKER_CHECKBOX) {
@@ -2101,22 +2441,49 @@ fn render_picker_dib(
         SelectObject(mem_dc, body_font as _);
         DeleteObject(header_font as _);
 
+        // Search input text (placeholder when empty, real query + caret otherwise).
+        let search_text_y = search_y + (search_h - tm.tmHeight) / 2;
+        if search.is_empty() {
+            let placeholder = match lang() {
+                Lang::Pl => "Szukaj po nazwie lub symbolu...",
+                Lang::En => "Search by name or symbol...",
+            };
+            draw_segment(mem_dc, search_x0 + 10, search_text_y, placeholder, dim);
+        } else {
+            let with_caret = format!("{search}|");
+            draw_segment(mem_dc, search_x0 + 10, search_text_y, &with_caret, row_text);
+            // Match count on the right side of the search bar.
+            let count_msg = match lang() {
+                Lang::Pl => format!("{} wyników", filtered.len()),
+                Lang::En => format!("{} matches", filtered.len()),
+            };
+            let count_w: Vec<u16> = count_msg.encode_utf16().collect();
+            let mut sz: windows_sys::Win32::Foundation::SIZE = std::mem::zeroed();
+            windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W(
+                mem_dc,
+                count_w.as_ptr(),
+                count_w.len() as i32,
+                &mut sz,
+            );
+            draw_segment(mem_dc, search_x1 - 10 - sz.cx, search_text_y, &count_msg, dim);
+        }
+
         // List rows: ticker + name. Checkboxes already drawn above.
         for row in 0..visible_rows {
-            let coin_idx = scroll + row;
-            if coin_idx < 0 || (coin_idx as usize) >= COINS.len() {
+            let filt_idx = scroll + row;
+            if filt_idx < 0 || (filt_idx as usize) >= filtered.len() {
                 break;
             }
-            let coin = &COINS[coin_idx as usize];
-            let y_row = PICKER_HEADER_H + row * PICKER_ROW_H;
+            let coin = &coins()[filtered[filt_idx as usize]];
+            let y_row = PICKER_LIST_TOP + row * PICKER_ROW_H;
             let text_y = y_row + (PICKER_ROW_H - tm.tmHeight) / 2;
 
             let ticker_x = PICKER_PAD_X + PICKER_CHECKBOX + 14;
             // Ticker in the coin's brand colour, so the row is visually tagged
             // even before icons are downloaded.
-            draw_segment(mem_dc, ticker_x, text_y, coin.ticker, coin.color(is_dark));
+            draw_segment(mem_dc, ticker_x, text_y, &coin.ticker, coin.color(is_dark));
             let name_x = ticker_x + PICKER_TICKER_W;
-            draw_segment(mem_dc, name_x, text_y, coin.name, dim);
+            draw_segment(mem_dc, name_x, text_y, &coin.name, dim);
         }
 
         // OK button label.
@@ -2702,15 +3069,29 @@ fn main() {
         .filter(|v| *v >= 5)
         .unwrap_or(DEFAULT_INTERVAL_SECS);
 
+    // Populate the coin catalog (cached on disk, fetched fresh on first run
+    // or when the cache is missing). After this point `coins()` returns the
+    // full ~15 k entries (or BUILTIN_COINS as offline fallback).
+    init_coin_catalog();
+
     let state = AppState::default();
-    let mut enabled_coins: HashSet<String> = load_enabled_coins();
+    // enabled_coins is now shared with the price + chart fetcher threads so
+    // they can rebuild their URL from the current selection at each tick.
+    let enabled_coins: Arc<Mutex<HashSet<String>>> =
+        Arc::new(Mutex::new(load_enabled_coins()));
 
     let (refresh_tx, refresh_rx) = mpsc::channel::<()>();
 
     {
         let state = state.clone();
+        let enabled = enabled_coins.clone();
         std::thread::spawn(move || loop {
-            let result = fetch_price();
+            let ids: Vec<String> = enabled
+                .lock()
+                .ok()
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            let result = fetch_price(&ids);
             {
                 let mut d = state.data.lock().unwrap();
                 *d = Some(result);
@@ -2741,16 +3122,27 @@ fn main() {
     let mut font_h: i32 = settings.font_h;
     let mut icon_d_px: u32 = settings.icon_d as u32;
     let mut right_margin: i32 = settings.right_margin;
-    let widget_width_px: u32 = compute_widget_width(enabled_coins.len(), show_charts);
+    let widget_width_px: u32 = {
+        let n = enabled_coins.lock().map(|s| s.len()).unwrap_or(0);
+        compute_widget_width(n, show_charts)
+    };
 
     // Load real coin icons (cached in %APPDATA%\CryptoTray\icons; fetched
-    // from CoinGecko on first run or whenever cache is missing).
-    let mut icons = load_icons(icon_d_px);
+    // from CoinGecko on first run or whenever cache is missing). Only fetch
+    // icons for the currently-enabled coins — the full catalog can be 15 k
+    // entries and we don't want to bulk-download every PNG.
+    let mut icons = {
+        let snapshot: Vec<String> = enabled_coins
+            .lock()
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        load_icons(&snapshot, icon_d_px)
+    };
 
     // 1-hour price history for sparklines, refreshed in the background.
     let charts: ChartData = Arc::new(Mutex::new(HashMap::new()));
     let charts_dirty: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-    spawn_chart_thread(charts.clone(), charts_dirty.clone());
+    spawn_chart_thread(charts.clone(), charts_dirty.clone(), enabled_coins.clone());
 
     // --- tray icon + menu --------------------------------------------------
     // Static menu labels, all translatable.
@@ -2972,7 +3364,7 @@ fn main() {
                                     last_left_press = None;
                                     let msg = format_price_message(
                                         &state,
-                                        &enabled_coins,
+                                        &*enabled_coins.lock().unwrap(),
                                         interval_secs,
                                     );
                                     show_message(&prices_title(), &msg);
@@ -3009,7 +3401,7 @@ fn main() {
                                 w,
                                 h,
                                 &state,
-                                &enabled_coins,
+                                &*enabled_coins.lock().unwrap(),
                                 &icons,
                                 &charts,
                                 show_charts,
@@ -3054,6 +3446,32 @@ fn main() {
                         picker.handle_scroll(lines);
                     }
                 }
+                WindowEvent::ReceivedImeText(text) => {
+                    picker.search_append(text);
+                }
+                WindowEvent::KeyboardInput { event: key_event, .. }
+                    if key_event.state == ElementState::Pressed =>
+                {
+                    use tao::keyboard::Key;
+                    // For text input, prefer the `text` field — it accounts for
+                    // shift/dead keys/IME composition properly.
+                    if let Some(ref txt) = key_event.text {
+                        picker.search_append(txt);
+                    }
+                    // Special keys (backspace / escape) won't have `text` set.
+                    match &key_event.logical_key {
+                        Key::Backspace => picker.search_backspace(),
+                        Key::Escape => {
+                            if picker.search.is_empty() {
+                                picker.close_cancel();
+                            } else {
+                                picker.search_clear();
+                            }
+                        }
+                        Key::Enter => picker.close_save(),
+                        _ => {}
+                    }
+                }
                 WindowEvent::CloseRequested => {
                     // Treat the X button as Cancel (don't commit selection).
                     picker.close_cancel();
@@ -3096,10 +3514,21 @@ fn main() {
         // Apply a picker save: replace enabled_coins, refresh widget + tray.
         if let Some(new_selection) = picker_result.lock().ok().and_then(|mut g| g.take())
         {
-            enabled_coins = new_selection;
-            save_enabled_coins(&enabled_coins);
+            *enabled_coins.lock().unwrap() = new_selection;
+            save_enabled_coins(&*enabled_coins.lock().unwrap());
             if let Some(t) = tray.as_ref() {
-                let _ = t.set_tooltip(Some(format_tooltip(&state, &enabled_coins)));
+                let _ = t.set_tooltip(Some(format_tooltip(&state, &*enabled_coins.lock().unwrap())));
+            }
+            // Reload icons for the new enabled set — picks up any newly
+            // added coins from the long-tail catalog that weren't in the
+            // initial load_icons call.
+            let snapshot: Vec<String> = enabled_coins
+                .lock()
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            let extra = load_icons(&snapshot, icon_d_px);
+            for (k, v) in extra {
+                icons.insert(k, v);
             }
             // Resize widget for new coin count and redraw.
             let resize_after_picker = |new_width: u32| {
@@ -3124,7 +3553,7 @@ fn main() {
                     );
                 }
             };
-            resize_after_picker(compute_widget_width(enabled_coins.len(), show_charts));
+            resize_after_picker(compute_widget_width(enabled_coins.lock().unwrap().len(), show_charts));
             widget.request_redraw();
         }
 
@@ -3141,11 +3570,15 @@ fn main() {
             right_margin = settings.right_margin;
             if icon_changed {
                 icon_d_px = settings.icon_d as u32;
-                icons = load_icons(icon_d_px);
+                let snapshot: Vec<String> = enabled_coins
+                    .lock()
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
+                icons = load_icons(&snapshot, icon_d_px);
             }
             if margin_changed || icon_changed {
                 // Recompute width + x using the new right margin.
-                let new_width = compute_widget_width(enabled_coins.len(), show_charts);
+                let new_width = compute_widget_width(enabled_coins.lock().unwrap().len(), show_charts);
                 let cur_pos = widget
                     .outer_position()
                     .unwrap_or(PhysicalPosition::new(0, 0));
@@ -3186,7 +3619,7 @@ fn main() {
         let current_update = *state.last_update.lock().unwrap();
         if current_update != last_rendered {
             if let Some(t) = tray.as_ref() {
-                let _ = t.set_tooltip(Some(format_tooltip(&state, &enabled_coins)));
+                let _ = t.set_tooltip(Some(format_tooltip(&state, &*enabled_coins.lock().unwrap())));
             }
             widget.request_redraw();
             last_rendered = current_update;
@@ -3219,7 +3652,7 @@ fn main() {
             };
 
             if ev.id == id_show {
-                let msg = format_price_message(&state, &enabled_coins, interval_secs);
+                let msg = format_price_message(&state, &*enabled_coins.lock().unwrap(), interval_secs);
                 show_message(&prices_title(), &msg);
             } else if ev.id == id_refresh {
                 let _ = refresh_tx.send(());
@@ -3235,7 +3668,7 @@ fn main() {
                     },
                 );
             } else if ev.id == id_choose_coins {
-                picker.open(&enabled_coins);
+                picker.open(&*enabled_coins.lock().unwrap());
             } else if ev.id == id_settings {
                 let defaults = Settings::defaults_for(widget_height_px);
                 settings_window.open(settings, defaults);
@@ -3243,13 +3676,20 @@ fn main() {
                 show_charts = !show_charts;
                 item_charts.set_checked(show_charts);
                 save_show_charts(show_charts);
-                resize_to_fit(compute_widget_width(enabled_coins.len(), show_charts));
+                resize_to_fit(compute_widget_width(enabled_coins.lock().unwrap().len(), show_charts));
                 widget.request_redraw();
             } else if ev.id == id_refresh_icons {
-                // Force-refetch (bypass cache). Merge new icons into existing
-                // map so coins whose fetch failed keep their previous icon
-                // instead of regressing to the circle+letter fallback.
-                let new_icons = force_refetch_icons(icon_d_px);
+                // Force-refetch (bypass cache). Only refetch for the currently
+                // enabled coins — the full catalog can be 15 k entries and
+                // we don't want to hammer CoinGecko with thousands of icon
+                // downloads. Merge result so coins whose fetch failed keep
+                // their previous icon instead of falling back to circle+letter.
+                let snapshot: Vec<String> = enabled_coins
+                    .lock()
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default();
+                let total = snapshot.len();
+                let new_icons = force_refetch_icons(&snapshot, icon_d_px);
                 let count = new_icons.len();
                 for (k, v) in new_icons {
                     icons.insert(k, v);
@@ -3260,13 +3700,11 @@ fn main() {
                     &match lang() {
                         Lang::Pl => format!(
                             "Pobrano {} z {} ikon z CoinGecko.",
-                            count,
-                            COINS.len()
+                            count, total
                         ),
                         Lang::En => format!(
                             "Downloaded {} of {} icons from CoinGecko.",
-                            count,
-                            COINS.len()
+                            count, total
                         ),
                     },
                 );
@@ -3367,7 +3805,7 @@ fn main() {
             } = ev
             {
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    let msg = format_price_message(&state, &enabled_coins, interval_secs);
+                    let msg = format_price_message(&state, &*enabled_coins.lock().unwrap(), interval_secs);
                     show_message(&prices_title(), &msg);
                 }
             }
