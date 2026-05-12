@@ -15,6 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Make Cargo.toml's package.version match the tag (`v1.2.3` -> `1.2.3`)
+      # so the binary's reported version and the MSI's ProductVersion line up
+      # with the GitHub Release title. Touches the file only on the runner —
+      # nothing gets pushed back to the repo.
+      - name: Sync Cargo.toml version with tag
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $content = Get-Content Cargo.toml -Raw
+          $content = $content -replace '(?m)^version = "[^"]+"', "version = `"$version`""
+          Set-Content -Path Cargo.toml -Value $content -NoNewline
+          Write-Host "Cargo.toml version set to $version"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -24,7 +37,16 @@ jobs:
       - name: Build (release)
         run: cargo build --release --verbose
 
-      - name: Stage portable ZIP
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --version "~0.3" --locked
+
+      - name: Build MSI installer
+        run: cargo wix --no-build --nocapture
+
+      - name: Stage release artifacts
         shell: pwsh
         run: |
           $stage = "crypto-tray-${{ github.ref_name }}-windows-x64"
@@ -34,11 +56,17 @@ jobs:
           Copy-Item LICENSE $stage\
           Compress-Archive -Path "$stage\*" -DestinationPath "$stage.zip"
 
+          # Rename the MSI produced by cargo-wix to match our convention.
+          $msi = Get-ChildItem target\wix\*.msi | Select-Object -First 1
+          if (-not $msi) { throw "No MSI found under target\wix" }
+          Move-Item $msi.FullName "$stage.msi"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             crypto-tray-${{ github.ref_name }}-windows-x64.zip
+            crypto-tray-${{ github.ref_name }}-windows-x64.msi
             target/release/crypto-tray.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
