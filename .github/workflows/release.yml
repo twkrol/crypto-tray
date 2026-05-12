@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Required to create a GitHub Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Stage portable ZIP
+        shell: pwsh
+        run: |
+          $stage = "crypto-tray-${{ github.ref_name }}-windows-x64"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target\release\crypto-tray.exe $stage\
+          Copy-Item README.md $stage\
+          Copy-Item LICENSE $stage\
+          Compress-Archive -Path "$stage\*" -DestinationPath "$stage.zip"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            crypto-tray-${{ github.ref_name }}-windows-x64.zip
+            target/release/crypto-tray.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
