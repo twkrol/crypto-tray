@@ -96,5 +96,40 @@
         REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
       </Custom>
     </InstallExecuteSequence>
+
+    <!--
+      Installer UI: WixUI_Minimal — single welcome+EULA dialog, then
+      progress, then the exit dialog. The exit dialog gets an optional
+      checkbox ("Launch Crypto Tray") wired to LaunchApplication via the
+      Publish entry below. We only enable the checkbox on fresh install /
+      upgrade (NOT UPGRADINGPRODUCTCODE is set during major-upgrade
+      uninstall passes; we also keep REMOVE="" so the box never shows on
+      a plain uninstall path).
+
+      LaunchApplication runs the app under the invoking user with
+      Return='asyncNoWait' so msiexec doesn't block waiting for the app
+      to exit — the user clicks Finish and gets a running tray icon.
+    -->
+    <UIRef Id='WixUI_Minimal'/>
+    <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
+
+    <Property Id='WIXUI_EXITDIALOGOPTIONALCHECKBOX' Value='1'/>
+    <Property Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' Value='Launch Crypto Tray'/>
+
+    <CustomAction Id='LaunchApplication'
+                  FileKey='exe0'
+                  ExeCommand=''
+                  Execute='immediate'
+                  Impersonate='yes'
+                  Return='asyncNoWait'/>
+
+    <UI>
+      <Publish Dialog='ExitDialog'
+               Control='Finish'
+               Event='DoAction'
+               Value='LaunchApplication'>
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed and REMOVE=""
+      </Publish>
+    </UI>
   </Product>
 </Wix>
