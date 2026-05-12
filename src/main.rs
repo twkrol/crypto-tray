@@ -18,9 +18,21 @@ use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
-const COINGECKO_URL: &str = "https://api.coingecko.com/api/v3/simple/price\
-                             ?ids=bitcoin,ethereum,monero,kaspa\
-                             &vs_currencies=usd,pln&include_24hr_change=true";
+/// Build the `/simple/price` URL covering every coin in `COINS`. We always
+/// fetch the full set even if only a subset is enabled — one HTTP request
+/// keeps the rate-limit budget tiny, and CoinGecko's response is still
+/// only ~5 KB even for 30 coins.
+fn coingecko_simple_price_url() -> String {
+    let ids = COINS
+        .iter()
+        .map(|c| c.id)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "https://api.coingecko.com/api/v3/simple/price\
+         ?ids={ids}&vs_currencies=usd,pln&include_24hr_change=true"
+    )
+}
 const APP_NAME: &str = "Crypto Tray";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -95,40 +107,49 @@ struct CoinMeta {
     color_light: u32,
 }
 
+/// Curated list of supported cryptocurrencies. The first four (BTC, ETH, XMR,
+/// KAS) are the application's default favourites; everything else can be
+/// opted into via the picker window. Colours use brand identity where I knew
+/// them; fallbacks are deliberately varied so the AA circle + letter icon
+/// stays distinguishable when a real CoinGecko icon hasn't downloaded yet.
 const COINS: &[CoinMeta] = &[
-    CoinMeta {
-        id: "bitcoin",
-        ticker: "BTC",
-        name: "Bitcoin",
-        letter: "B",
-        color_dark: 0x00_F7_93_1A,
-        color_light: 0x00_C7_72_0A,
-    },
-    CoinMeta {
-        id: "ethereum",
-        ticker: "ETH",
-        name: "Ethereum",
-        letter: "E",
-        color_dark: 0x00_62_7E_EA,
-        color_light: 0x00_42_51_A0,
-    },
-    CoinMeta {
-        id: "monero",
-        ticker: "XMR",
-        name: "Monero",
-        letter: "M",
-        color_dark: 0x00_FF_66_00,
-        color_light: 0x00_CC_55_00,
-    },
-    CoinMeta {
-        id: "kaspa",
-        ticker: "KAS",
-        name: "Kaspa",
-        letter: "K",
-        color_dark: 0x00_70_C7_BA,
-        color_light: 0x00_2A_8A_7E,
-    },
+    // --- Default favourites ----------------------------------------------
+    CoinMeta { id: "bitcoin",         ticker: "BTC",  name: "Bitcoin",          letter: "B", color_dark: 0x00_F7_93_1A, color_light: 0x00_C7_72_0A },
+    CoinMeta { id: "ethereum",        ticker: "ETH",  name: "Ethereum",         letter: "E", color_dark: 0x00_62_7E_EA, color_light: 0x00_42_51_A0 },
+    CoinMeta { id: "monero",          ticker: "XMR",  name: "Monero",           letter: "M", color_dark: 0x00_FF_66_00, color_light: 0x00_CC_55_00 },
+    CoinMeta { id: "kaspa",           ticker: "KAS",  name: "Kaspa",            letter: "K", color_dark: 0x00_70_C7_BA, color_light: 0x00_2A_8A_7E },
+    // --- Other supported coins (not enabled by default) ------------------
+    CoinMeta { id: "tether",          ticker: "USDT", name: "Tether",           letter: "T", color_dark: 0x00_26_A1_7B, color_light: 0x00_1E_82_5F },
+    CoinMeta { id: "binancecoin",     ticker: "BNB",  name: "BNB",              letter: "B", color_dark: 0x00_F3_BA_2F, color_light: 0x00_C2_94_21 },
+    CoinMeta { id: "solana",          ticker: "SOL",  name: "Solana",           letter: "S", color_dark: 0x00_9B_4D_FC, color_light: 0x00_7A_3D_C9 },
+    CoinMeta { id: "ripple",          ticker: "XRP",  name: "XRP",              letter: "X", color_dark: 0x00_22_99_CD, color_light: 0x00_1A_7A_A4 },
+    CoinMeta { id: "usd-coin",        ticker: "USDC", name: "USD Coin",         letter: "U", color_dark: 0x00_27_77_C9, color_light: 0x00_1E_5F_A1 },
+    CoinMeta { id: "cardano",         ticker: "ADA",  name: "Cardano",          letter: "A", color_dark: 0x00_0D_33_AB, color_light: 0x00_0A_27_88 },
+    CoinMeta { id: "dogecoin",        ticker: "DOGE", name: "Dogecoin",         letter: "D", color_dark: 0x00_C2_A6_33, color_light: 0x00_9B_85_29 },
+    CoinMeta { id: "tron",            ticker: "TRX",  name: "TRON",             letter: "T", color_dark: 0x00_EB_00_29, color_light: 0x00_BC_00_21 },
+    CoinMeta { id: "avalanche-2",     ticker: "AVAX", name: "Avalanche",        letter: "A", color_dark: 0x00_E8_41_42, color_light: 0x00_BA_34_35 },
+    CoinMeta { id: "chainlink",       ticker: "LINK", name: "Chainlink",        letter: "L", color_dark: 0x00_24_5A_E2, color_light: 0x00_1B_48_B5 },
+    CoinMeta { id: "polkadot",        ticker: "DOT",  name: "Polkadot",         letter: "D", color_dark: 0x00_E6_00_7A, color_light: 0x00_B8_00_62 },
+    CoinMeta { id: "litecoin",        ticker: "LTC",  name: "Litecoin",         letter: "L", color_dark: 0x00_BF_BB_BB, color_light: 0x00_88_88_88 },
+    CoinMeta { id: "bitcoin-cash",    ticker: "BCH",  name: "Bitcoin Cash",     letter: "B", color_dark: 0x00_8D_C3_51, color_light: 0x00_70_9C_41 },
+    CoinMeta { id: "internet-computer", ticker: "ICP", name: "Internet Computer", letter: "I", color_dark: 0x00_29_AB_E2, color_light: 0x00_21_88_B5 },
+    CoinMeta { id: "near",            ticker: "NEAR", name: "NEAR Protocol",    letter: "N", color_dark: 0x00_42_85_F4, color_light: 0x00_34_6A_C3 },
+    CoinMeta { id: "uniswap",         ticker: "UNI",  name: "Uniswap",          letter: "U", color_dark: 0x00_FF_00_7A, color_light: 0x00_CC_00_62 },
+    CoinMeta { id: "ethereum-classic", ticker: "ETC", name: "Ethereum Classic", letter: "E", color_dark: 0x00_32_8E_30, color_light: 0x00_28_71_27 },
+    CoinMeta { id: "stellar",         ticker: "XLM",  name: "Stellar",          letter: "X", color_dark: 0x00_47_4A_6B, color_light: 0x00_2A_2B_3C },
+    CoinMeta { id: "cosmos",          ticker: "ATOM", name: "Cosmos",           letter: "A", color_dark: 0x00_6F_7A_F0, color_light: 0x00_4C_57_BD },
+    CoinMeta { id: "filecoin",        ticker: "FIL",  name: "Filecoin",         letter: "F", color_dark: 0x00_00_90_FF, color_light: 0x00_00_73_CC },
+    CoinMeta { id: "vechain",         ticker: "VET",  name: "VeChain",          letter: "V", color_dark: 0x00_15_BD_FF, color_light: 0x00_10_97_CC },
+    CoinMeta { id: "the-graph",       ticker: "GRT",  name: "The Graph",        letter: "G", color_dark: 0x00_6F_47_FF, color_light: 0x00_5A_3A_D0 },
+    CoinMeta { id: "aave",            ticker: "AAVE", name: "Aave",             letter: "A", color_dark: 0x00_B6_50_9E, color_light: 0x00_92_3F_7E },
+    CoinMeta { id: "maker",           ticker: "MKR",  name: "Maker",            letter: "M", color_dark: 0x00_1A_AB_9B, color_light: 0x00_14_88_7C },
+    CoinMeta { id: "algorand",        ticker: "ALGO", name: "Algorand",         letter: "A", color_dark: 0x00_70_75_8F, color_light: 0x00_4A_4F_6A },
+    CoinMeta { id: "tezos",           ticker: "XTZ",  name: "Tezos",            letter: "T", color_dark: 0x00_2C_7D_F7, color_light: 0x00_22_64_C5 },
 ];
+
+/// CoinGecko ids of the default-favourite coins (used when there's no
+/// `coins.txt` config file yet, e.g. on first run).
+const DEFAULT_FAVOURITES: &[&str] = &["bitcoin", "ethereum", "monero", "kaspa"];
 
 impl CoinMeta {
     fn color(&self, dark: bool) -> u32 {
@@ -148,25 +169,10 @@ struct CoinData {
     pln_24h_change: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct Prices {
-    bitcoin: CoinData,
-    ethereum: CoinData,
-    monero: CoinData,
-    kaspa: CoinData,
-}
-
-impl Prices {
-    fn get(&self, id: &str) -> Option<&CoinData> {
-        match id {
-            "bitcoin" => Some(&self.bitcoin),
-            "ethereum" => Some(&self.ethereum),
-            "monero" => Some(&self.monero),
-            "kaspa" => Some(&self.kaspa),
-            _ => None,
-        }
-    }
-}
+/// CoinGecko `/simple/price` returns a JSON object keyed by coin id. Map
+/// directly to a HashMap so we don't have to name every supported coin in
+/// a struct.
+type Prices = HashMap<String, CoinData>;
 
 #[derive(Clone, Default)]
 struct AppState {
@@ -175,7 +181,8 @@ struct AppState {
 }
 
 fn fetch_price() -> Result<Prices, String> {
-    let resp = ureq::get(COINGECKO_URL)
+    let url = coingecko_simple_price_url();
+    let resp = ureq::get(&url)
         .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/json")
         .timeout(Duration::from_secs(15))
@@ -467,8 +474,8 @@ fn load_enabled_coins() -> HashSet<String> {
                 .collect();
         }
     }
-    // Default — all four enabled.
-    COINS.iter().map(|c| c.id.to_string()).collect()
+    // First-run default — only the four built-in favourites.
+    DEFAULT_FAVOURITES.iter().map(|s| s.to_string()).collect()
 }
 
 fn save_enabled_coins(enabled: &HashSet<String>) {
@@ -548,10 +555,16 @@ struct CoinGeckoMarket {
 }
 
 fn fetch_icon_urls() -> HashMap<String, String> {
-    let url = "https://api.coingecko.com/api/v3/coins/markets\
-               ?vs_currency=usd&ids=bitcoin,ethereum,monero,kaspa";
+    let ids = COINS
+        .iter()
+        .map(|c| c.id)
+        .collect::<Vec<_>>()
+        .join(",");
+    let url = format!(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={ids}"
+    );
     let mut map = HashMap::new();
-    if let Ok(resp) = ureq::get(url)
+    if let Ok(resp) = ureq::get(&url)
         .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(10))
         .call()
@@ -845,22 +858,28 @@ fn fetch_chart(id: &str) -> Option<Vec<f64>> {
 }
 
 fn spawn_chart_thread(charts: ChartData, dirty: Arc<AtomicBool>) {
-    // One thread per coin — at startup all four fetch in parallel so every
-    // sparkline shows up within ~1s instead of waiting for a sequential walk.
-    // Threads stagger by 200ms each to keep the initial burst within the rate
-    // limit, and retry quickly (30s) on failure instead of waiting the full
-    // refresh interval (15 min) — that's what was leaving sparklines blank
-    // when the first fetch happened to coincide with rate-limited windows
-    // (e.g. right after manual icon refresh).
+    // One thread per coin. Layered stagger:
+    //   - The four default favourites start almost immediately (0/200/400/600 ms)
+    //     so the visible widget gets its sparklines populated within ~1 s,
+    //     same as the previous 4-coin behaviour.
+    //   - The remaining coins start at 30 s, 60 s, 90 s… so the initial burst
+    //     stays under CoinGecko's per-minute rate cap and a freshly-enabled
+    //     coin gets its sparkline within ~15 min at worst (often much sooner
+    //     because its thread has already cycled past its initial wait).
+    // After the initial wait each thread runs its own 15-min cycle and falls
+    // back to a 30 s retry on failure (network blip / rate limit).
+    let default_count = DEFAULT_FAVOURITES.len();
     for (idx, coin) in COINS.iter().enumerate() {
         let charts = charts.clone();
         let dirty = dirty.clone();
         let coin_id = coin.id.to_string();
-        let stagger_ms = (idx as u64) * 200;
+        let initial_wait = if idx < default_count {
+            Duration::from_millis((idx as u64) * 200)
+        } else {
+            Duration::from_secs(((idx - default_count) as u64 + 1) * 30)
+        };
         std::thread::spawn(move || {
-            if stagger_ms > 0 {
-                std::thread::sleep(Duration::from_millis(stagger_ms));
-            }
+            std::thread::sleep(initial_wait);
             loop {
                 if let Some(points) = fetch_chart(&coin_id) {
                     if let Ok(mut c) = charts.lock() {
@@ -1534,6 +1553,510 @@ fn render_widget(
     }
 }
 
+// --- favourites picker window ------------------------------------------------
+
+/// Layout constants for the picker window. Logical pixels (the window is
+/// built with `LogicalSize` so values scale on hi-DPI monitors).
+const PICKER_WIDTH: u32 = 400;
+const PICKER_HEIGHT: u32 = 540;
+const PICKER_HEADER_H: i32 = 44;
+const PICKER_FOOTER_H: i32 = 56;
+const PICKER_ROW_H: i32 = 30;
+const PICKER_PAD_X: i32 = 14;
+const PICKER_CHECKBOX: i32 = 18;
+const PICKER_TICKER_W: i32 = 60;
+
+/// Result of a picker open/close cycle, shared between the picker window and
+/// the main event loop. When the user clicks "OK" the new HashSet lands in
+/// the Mutex; the main loop polls it once per tick, applies it as the new
+/// `enabled_coins`, and writes it to disk.
+type PickerResult = Arc<Mutex<Option<HashSet<String>>>>;
+
+struct Picker {
+    window: Arc<tao::window::Window>,
+    surface: softbuffer::Surface<Arc<tao::window::Window>, Arc<tao::window::Window>>,
+    /// Draft selection — mutated by clicks before being committed on OK.
+    selected: HashSet<String>,
+    scroll: i32,
+    hover_index: Option<usize>,
+    visible: bool,
+    pending_result: PickerResult,
+}
+
+impl Picker {
+    fn new(
+        event_loop: &tao::event_loop::EventLoop<()>,
+        pending_result: PickerResult,
+    ) -> Self {
+        let title = match lang() {
+            Lang::Pl => "Wybierz kryptowaluty",
+            Lang::En => "Choose cryptocurrencies",
+        };
+        let window = Arc::new(
+            WindowBuilder::new()
+                .with_title(title)
+                .with_inner_size(tao::dpi::LogicalSize::new(
+                    PICKER_WIDTH as f64,
+                    PICKER_HEIGHT as f64,
+                ))
+                .with_resizable(false)
+                .with_visible(false)
+                .with_skip_taskbar(false)
+                .build(event_loop)
+                .expect("failed to build picker window"),
+        );
+        let context =
+            softbuffer::Context::new(window.clone()).expect("picker softbuffer ctx");
+        let surface =
+            softbuffer::Surface::new(&context, window.clone()).expect("picker surface");
+        Picker {
+            window,
+            surface,
+            selected: HashSet::new(),
+            scroll: 0,
+            hover_index: None,
+            visible: false,
+            pending_result,
+        }
+    }
+
+    fn id(&self) -> tao::window::WindowId {
+        self.window.id()
+    }
+
+    fn open(&mut self, current_enabled: &HashSet<String>) {
+        self.selected = current_enabled.clone();
+        self.scroll = 0;
+        self.hover_index = None;
+        self.window.set_visible(true);
+        self.visible = true;
+        // Pull to front in case it's already on screen behind something.
+        let _ = self.window.set_focus();
+        self.window.request_redraw();
+    }
+
+    fn close_save(&mut self) {
+        if let Ok(mut slot) = self.pending_result.lock() {
+            *slot = Some(self.selected.clone());
+        }
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    fn close_cancel(&mut self) {
+        // Just hide — discard the draft.
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    fn visible_rows(&self) -> i32 {
+        let size = self.window.inner_size();
+        let avail = size.height as i32 - PICKER_HEADER_H - PICKER_FOOTER_H;
+        (avail / PICKER_ROW_H).max(1)
+    }
+
+    fn max_scroll(&self) -> i32 {
+        let total = COINS.len() as i32;
+        (total - self.visible_rows()).max(0)
+    }
+
+    fn hit_row(&self, _x: i32, y: i32) -> Option<usize> {
+        if y < PICKER_HEADER_H {
+            return None;
+        }
+        let size = self.window.inner_size();
+        let list_bottom = size.height as i32 - PICKER_FOOTER_H;
+        if y >= list_bottom {
+            return None;
+        }
+        let row = ((y - PICKER_HEADER_H) / PICKER_ROW_H) as usize;
+        let idx = row as i32 + self.scroll;
+        if idx >= 0 && (idx as usize) < COINS.len() {
+            Some(idx as usize)
+        } else {
+            None
+        }
+    }
+
+    fn hit_ok(&self, x: i32, y: i32) -> bool {
+        let size = self.window.inner_size();
+        let w = size.width as i32;
+        let h = size.height as i32;
+        let btn_w = 100;
+        let btn_h = 32;
+        let btn_x = w - PICKER_PAD_X - btn_w;
+        let btn_y = h - PICKER_FOOTER_H + (PICKER_FOOTER_H - btn_h) / 2;
+        x >= btn_x && x < btn_x + btn_w && y >= btn_y && y < btn_y + btn_h
+    }
+
+    fn handle_click(&mut self, x: i32, y: i32) {
+        if self.hit_ok(x, y) {
+            self.close_save();
+            return;
+        }
+        if let Some(idx) = self.hit_row(x, y) {
+            let id = COINS[idx].id.to_string();
+            if self.selected.contains(&id) {
+                self.selected.remove(&id);
+            } else {
+                self.selected.insert(id);
+            }
+            self.window.request_redraw();
+        }
+    }
+
+    fn handle_hover(&mut self, x: i32, y: i32) {
+        let new_hover = self.hit_row(x, y);
+        if new_hover != self.hover_index {
+            self.hover_index = new_hover;
+            self.window.request_redraw();
+        }
+    }
+
+    fn handle_scroll(&mut self, delta_lines: i32) {
+        let new = (self.scroll - delta_lines).clamp(0, self.max_scroll());
+        if new != self.scroll {
+            self.scroll = new;
+            self.window.request_redraw();
+        }
+    }
+
+    fn render(&mut self, theme: Theme, is_dark: bool, font_h: i32) {
+        let size = self.window.inner_size();
+        let w = size.width.max(1);
+        let h = size.height.max(1);
+        let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
+            return;
+        };
+        if self.surface.resize(nz_w, nz_h).is_err() {
+            return;
+        }
+        let Ok(mut buf) = self.surface.buffer_mut() else {
+            return;
+        };
+        render_picker_dib(
+            &mut buf,
+            w,
+            h,
+            &self.selected,
+            self.scroll,
+            self.hover_index,
+            theme,
+            is_dark,
+            font_h,
+        );
+        let _ = buf.present();
+    }
+}
+
+#[cfg(windows)]
+fn render_picker_dib(
+    buffer: &mut [u32],
+    w: u32,
+    h: u32,
+    selected: &HashSet<String>,
+    scroll: i32,
+    hover_index: Option<usize>,
+    theme: Theme,
+    is_dark: bool,
+    font_h: i32,
+) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+        CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
+        DEFAULT_PITCH, DIB_RGB_COLORS, DeleteDC, DeleteObject, FF_SWISS, FW_BOLD, FW_NORMAL,
+        FillRect, GetDC, GetTextMetricsW, OUT_DEFAULT_PRECIS, RGBQUAD, ReleaseDC, SelectObject,
+        SetBkMode, TEXTMETRICW, TRANSPARENT,
+    };
+
+    let wu = w as usize;
+    let hu = h as usize;
+    let pixel_count = wu * hu;
+
+    // Hover background: lighten by a hair, blends with theme.bg.
+    let hover_bg = blend_rgb(theme.bg, theme.text, 0.08);
+    let row_text = theme.text;
+    let dim = theme.dim;
+    let checked_fill = theme.up;
+    let border = blend_rgb(theme.bg, theme.text, 0.35);
+
+    unsafe {
+        let screen_dc = GetDC(null_mut());
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        ReleaseDC(null_mut(), screen_dc);
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB as u32,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
+        };
+        let mut dib_bits: *mut core::ffi::c_void = null_mut();
+        let dib = CreateDIBSection(
+            mem_dc,
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut dib_bits,
+            null_mut(),
+            0,
+        );
+        if dib.is_null() || dib_bits.is_null() {
+            DeleteDC(mem_dc);
+            buffer[..pixel_count].fill(theme.bg);
+            return;
+        }
+        let old_dib = SelectObject(mem_dc, dib as _);
+
+        // Background fill.
+        let brush_bg = CreateSolidBrush(rgb_to_colorref(theme.bg));
+        let full = RECT {
+            left: 0,
+            top: 0,
+            right: w as i32,
+            bottom: h as i32,
+        };
+        FillRect(mem_dc, &full, brush_bg);
+        DeleteObject(brush_bg as _);
+
+        // Hover row highlight (drawn BEFORE text so text sits on top).
+        if let Some(idx) = hover_index {
+            let row_idx_in_view = idx as i32 - scroll;
+            if row_idx_in_view >= 0 {
+                let y = PICKER_HEADER_H + row_idx_in_view * PICKER_ROW_H;
+                if y + PICKER_ROW_H <= h as i32 - PICKER_FOOTER_H {
+                    let hover_brush = CreateSolidBrush(rgb_to_colorref(hover_bg));
+                    let r = RECT {
+                        left: 0,
+                        top: y,
+                        right: w as i32,
+                        bottom: y + PICKER_ROW_H,
+                    };
+                    FillRect(mem_dc, &r, hover_brush);
+                    DeleteObject(hover_brush as _);
+                }
+            }
+        }
+
+        // Top header separator (1 px line).
+        let sep_brush = CreateSolidBrush(rgb_to_colorref(border));
+        let sep_top = RECT {
+            left: 0,
+            top: PICKER_HEADER_H - 1,
+            right: w as i32,
+            bottom: PICKER_HEADER_H,
+        };
+        FillRect(mem_dc, &sep_top, sep_brush);
+        let sep_bot_y = h as i32 - PICKER_FOOTER_H;
+        let sep_bot = RECT {
+            left: 0,
+            top: sep_bot_y,
+            right: w as i32,
+            bottom: sep_bot_y + 1,
+        };
+        FillRect(mem_dc, &sep_bot, sep_brush);
+        DeleteObject(sep_brush as _);
+
+        // OK button background.
+        let btn_w = 100;
+        let btn_h = 32;
+        let btn_x = w as i32 - PICKER_PAD_X - btn_w;
+        let btn_y = sep_bot_y + (PICKER_FOOTER_H - btn_h) / 2;
+        let ok_brush = CreateSolidBrush(rgb_to_colorref(theme.up));
+        let ok_rect = RECT {
+            left: btn_x,
+            top: btn_y,
+            right: btn_x + btn_w,
+            bottom: btn_y + btn_h,
+        };
+        FillRect(mem_dc, &ok_rect, ok_brush);
+        DeleteObject(ok_brush as _);
+
+        // Checkboxes: drawn as filled or empty squares. Drawn directly to DIB.
+        let dib_mut =
+            std::slice::from_raw_parts_mut(dib_bits as *mut u32, pixel_count);
+        let visible_rows = ((h as i32 - PICKER_HEADER_H - PICKER_FOOTER_H) / PICKER_ROW_H).max(0);
+        for row in 0..visible_rows {
+            let coin_idx = scroll + row;
+            if coin_idx < 0 || (coin_idx as usize) >= COINS.len() {
+                break;
+            }
+            let coin = &COINS[coin_idx as usize];
+            let y_row = PICKER_HEADER_H + row * PICKER_ROW_H;
+            let cb_x = PICKER_PAD_X;
+            let cb_y = y_row + (PICKER_ROW_H - PICKER_CHECKBOX) / 2;
+            let checked = selected.contains(coin.id);
+
+            // Border (1 px rect)
+            for px in cb_x..(cb_x + PICKER_CHECKBOX) {
+                for &py in &[cb_y, cb_y + PICKER_CHECKBOX - 1] {
+                    if px >= 0 && (px as usize) < wu && py >= 0 && (py as usize) < hu {
+                        dib_mut[py as usize * wu + px as usize] = border;
+                    }
+                }
+            }
+            for py in cb_y..(cb_y + PICKER_CHECKBOX) {
+                for &px in &[cb_x, cb_x + PICKER_CHECKBOX - 1] {
+                    if px >= 0 && (px as usize) < wu && py >= 0 && (py as usize) < hu {
+                        dib_mut[py as usize * wu + px as usize] = border;
+                    }
+                }
+            }
+            if checked {
+                // Fill interior with the brand colour of the coin (gives the
+                // picker a little visual texture instead of all-green ticks).
+                let fill = coin.color(is_dark);
+                for py in (cb_y + 2)..(cb_y + PICKER_CHECKBOX - 2) {
+                    for px in (cb_x + 2)..(cb_x + PICKER_CHECKBOX - 2) {
+                        if px >= 0 && (px as usize) < wu && py >= 0 && (py as usize) < hu {
+                            dib_mut[py as usize * wu + px as usize] = fill;
+                        }
+                    }
+                }
+                // Diagonal check mark in white over the brand colour.
+                let cx0 = cb_x + 4;
+                let cy0 = cb_y + PICKER_CHECKBOX / 2;
+                let cx1 = cb_x + PICKER_CHECKBOX / 2 - 1;
+                let cy1 = cb_y + PICKER_CHECKBOX - 5;
+                let cx2 = cb_x + PICKER_CHECKBOX - 4;
+                let cy2 = cb_y + 4;
+                draw_line(dib_mut, wu, hu, cx0, cy0, cx1, cy1, 0x00_FF_FF_FF);
+                draw_line(dib_mut, wu, hu, cx0, cy0 + 1, cx1, cy1 + 1, 0x00_FF_FF_FF);
+                draw_line(dib_mut, wu, hu, cx1, cy1, cx2, cy2, 0x00_FF_FF_FF);
+                draw_line(dib_mut, wu, hu, cx1, cy1 + 1, cx2, cy2 + 1, 0x00_FF_FF_FF);
+            }
+        }
+
+        // Font for the body text (ticker + name).
+        let face_w: Vec<u16> = OsStr::new(FONT_FACE)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let body_font = CreateFontW(
+            -font_h,
+            0,
+            0,
+            0,
+            FW_NORMAL as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_SWISS) as u32,
+            face_w.as_ptr(),
+        );
+        let old_font = SelectObject(mem_dc, body_font as _);
+        SetBkMode(mem_dc, TRANSPARENT as i32);
+
+        let mut tm: TEXTMETRICW = std::mem::zeroed();
+        GetTextMetricsW(mem_dc, &mut tm);
+
+        // Header title.
+        let header_font = CreateFontW(
+            -((font_h * 12) / 10), // ~20% larger for header
+            0,
+            0,
+            0,
+            FW_BOLD as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_SWISS) as u32,
+            face_w.as_ptr(),
+        );
+        let _prev = SelectObject(mem_dc, header_font as _);
+        let mut tm_header: TEXTMETRICW = std::mem::zeroed();
+        GetTextMetricsW(mem_dc, &mut tm_header);
+        let header_text = match lang() {
+            Lang::Pl => "Wybierz kryptowaluty",
+            Lang::En => "Choose cryptocurrencies",
+        };
+        let header_y = (PICKER_HEADER_H - tm_header.tmHeight) / 2;
+        draw_segment(mem_dc, PICKER_PAD_X, header_y, header_text, row_text);
+        SelectObject(mem_dc, body_font as _);
+        DeleteObject(header_font as _);
+
+        // List rows: ticker + name. Checkboxes already drawn above.
+        for row in 0..visible_rows {
+            let coin_idx = scroll + row;
+            if coin_idx < 0 || (coin_idx as usize) >= COINS.len() {
+                break;
+            }
+            let coin = &COINS[coin_idx as usize];
+            let y_row = PICKER_HEADER_H + row * PICKER_ROW_H;
+            let text_y = y_row + (PICKER_ROW_H - tm.tmHeight) / 2;
+
+            let ticker_x = PICKER_PAD_X + PICKER_CHECKBOX + 14;
+            // Ticker in the coin's brand colour, so the row is visually tagged
+            // even before icons are downloaded.
+            draw_segment(mem_dc, ticker_x, text_y, coin.ticker, coin.color(is_dark));
+            let name_x = ticker_x + PICKER_TICKER_W;
+            draw_segment(mem_dc, name_x, text_y, coin.name, dim);
+        }
+
+        // OK button label.
+        let ok_text = "OK";
+        let mut ok_sz: windows_sys::Win32::Foundation::SIZE = std::mem::zeroed();
+        let ok_text_w: Vec<u16> = ok_text.encode_utf16().collect();
+        windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W(
+            mem_dc,
+            ok_text_w.as_ptr(),
+            ok_text_w.len() as i32,
+            &mut ok_sz,
+        );
+        let ok_text_x = btn_x + (btn_w - ok_sz.cx) / 2;
+        let ok_text_y = btn_y + (btn_h - ok_sz.cy) / 2;
+        draw_segment(mem_dc, ok_text_x, ok_text_y, ok_text, 0x00_FF_FF_FF);
+
+        // Hint near OK button: how many selected.
+        let hint = match lang() {
+            Lang::Pl => format!("Zaznaczone: {}", selected.len()),
+            Lang::En => format!("Selected: {}", selected.len()),
+        };
+        let hint_y = btn_y + (btn_h - tm.tmHeight) / 2;
+        draw_segment(mem_dc, PICKER_PAD_X, hint_y, &hint, dim);
+        let _ = checked_fill; // reserved for future use (currently brand colour used instead)
+
+        // Copy DIB → softbuffer.
+        let dib_slice =
+            std::slice::from_raw_parts(dib_bits as *const u32, pixel_count);
+        if buffer.len() >= pixel_count {
+            buffer[..pixel_count].copy_from_slice(dib_slice);
+        }
+
+        SelectObject(mem_dc, old_font);
+        SelectObject(mem_dc, old_dib);
+        DeleteObject(body_font as _);
+        DeleteObject(dib as _);
+        DeleteDC(mem_dc);
+    }
+}
+
 // ----------------------------------------------------------------------------
 
 fn main() {
@@ -1628,10 +2151,11 @@ fn main() {
     let item_refresh = MenuItem::new(label_refresh, true, None);
     let sep1 = PredefinedMenuItem::separator();
 
-    let item_btc = CheckMenuItem::new("BTC", true, enabled_coins.contains("bitcoin"), None);
-    let item_eth = CheckMenuItem::new("ETH", true, enabled_coins.contains("ethereum"), None);
-    let item_xmr = CheckMenuItem::new("XMR", true, enabled_coins.contains("monero"), None);
-    let item_kas = CheckMenuItem::new("KAS", true, enabled_coins.contains("kaspa"), None);
+    let label_choose_coins = match lang() {
+        Lang::Pl => "Wybierz kryptowaluty...",
+        Lang::En => "Choose cryptocurrencies...",
+    };
+    let item_choose_coins = MenuItem::new(label_choose_coins, true, None);
 
     let sep2 = PredefinedMenuItem::separator();
     let item_charts = CheckMenuItem::new(label_charts, true, show_charts, None);
@@ -1648,10 +2172,7 @@ fn main() {
         &item_show,
         &item_refresh,
         &sep1,
-        &item_btc,
-        &item_eth,
-        &item_xmr,
-        &item_kas,
+        &item_choose_coins,
         &sep2,
         &item_charts,
         &item_refresh_icons,
@@ -1666,10 +2187,7 @@ fn main() {
 
     let id_show = item_show.id().clone();
     let id_refresh = item_refresh.id().clone();
-    let id_btc = item_btc.id().clone();
-    let id_eth = item_eth.id().clone();
-    let id_xmr = item_xmr.id().clone();
-    let id_kas = item_kas.id().clone();
+    let id_choose_coins = item_choose_coins.id().clone();
     let id_charts = item_charts.id().clone();
     let id_refresh_icons = item_refresh_icons.id().clone();
     let id_check_update = item_check_update.id().clone();
@@ -1736,6 +2254,15 @@ fn main() {
     let context = softbuffer::Context::new(widget.clone()).expect("softbuffer context");
     let mut surface =
         softbuffer::Surface::new(&context, widget.clone()).expect("softbuffer surface");
+
+    // Favourites picker — built but hidden; opened by the menu item.
+    let picker_result: PickerResult = Arc::new(Mutex::new(None));
+    let mut picker = Picker::new(&event_loop, picker_result.clone());
+    let picker_id = picker.id();
+    // Cursor position bookkeeping for picker click hit-testing (tao gives us
+    // CursorMoved events with position, and MouseInput events without — we
+    // remember the last cursor position to know where the click happened).
+    let mut picker_cursor: PhysicalPosition<f64> = PhysicalPosition::new(0.0, 0.0);
 
     let menu_channel = MenuEvent::receiver();
     let tray_channel = TrayIconEvent::receiver();
@@ -1843,7 +2370,82 @@ fn main() {
                     }
                 }
             }
+            // --- picker window events ----------------------------------------
+            Event::WindowEvent {
+                event: window_event,
+                window_id,
+                ..
+            } if *window_id == picker_id => match window_event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    picker_cursor = *position;
+                    picker.handle_hover(position.x as i32, position.y as i32);
+                }
+                WindowEvent::MouseInput {
+                    state: btn_state,
+                    button: TaoMouseButton::Left,
+                    ..
+                } if *btn_state == ElementState::Pressed => {
+                    picker.handle_click(
+                        picker_cursor.x as i32,
+                        picker_cursor.y as i32,
+                    );
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    use tao::event::MouseScrollDelta;
+                    let lines = match delta {
+                        MouseScrollDelta::LineDelta(_, dy) => *dy as i32,
+                        MouseScrollDelta::PixelDelta(p) => (p.y as i32) / 28,
+                        _ => 0,
+                    };
+                    if lines != 0 {
+                        picker.handle_scroll(lines);
+                    }
+                }
+                WindowEvent::CloseRequested => {
+                    // Treat the X button as Cancel (don't commit selection).
+                    picker.close_cancel();
+                }
+                _ => {}
+            },
+            Event::RedrawRequested(window_id) if *window_id == picker_id => {
+                picker.render(theme, is_dark, font_h);
+            }
             _ => {}
+        }
+
+        // Apply a picker save: replace enabled_coins, refresh widget + tray.
+        if let Some(new_selection) = picker_result.lock().ok().and_then(|mut g| g.take())
+        {
+            enabled_coins = new_selection;
+            save_enabled_coins(&enabled_coins);
+            if let Some(t) = tray.as_ref() {
+                let _ = t.set_tooltip(Some(format_tooltip(&state, &enabled_coins)));
+            }
+            // Resize widget for new coin count and redraw.
+            let resize_after_picker = |new_width: u32| {
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+                };
+                let cur_pos = widget
+                    .outer_position()
+                    .unwrap_or(PhysicalPosition::new(0, 0));
+                let cur_size = widget.outer_size();
+                let right = cur_pos.x + cur_size.width as i32;
+                let new_x = right - new_width as i32;
+                unsafe {
+                    SetWindowPos(
+                        widget.hwnd() as *mut std::ffi::c_void,
+                        std::ptr::null_mut(),
+                        new_x,
+                        cur_pos.y,
+                        new_width as i32,
+                        cur_size.height as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            };
+            resize_after_picker(compute_widget_width(enabled_coins.len(), show_charts));
+            widget.request_redraw();
         }
 
         let current_update = *state.last_update.lock().unwrap();
@@ -1881,24 +2483,6 @@ fn main() {
                 }
             };
 
-            // Helper: handle a coin checkbox toggle.
-            let mut toggle_coin = |id: &str, item: &CheckMenuItem| {
-                let was = enabled_coins.contains(id);
-                if was {
-                    enabled_coins.remove(id);
-                } else {
-                    enabled_coins.insert(id.to_string());
-                }
-                let new_state = !was;
-                item.set_checked(new_state);
-                save_enabled_coins(&enabled_coins);
-                if let Some(t) = tray.as_ref() {
-                    let _ = t.set_tooltip(Some(format_tooltip(&state, &enabled_coins)));
-                }
-                resize_to_fit(compute_widget_width(enabled_coins.len(), show_charts));
-                widget.request_redraw();
-            };
-
             if ev.id == id_show {
                 let msg = format_price_message(&state, &enabled_coins, interval_secs);
                 show_message(&prices_title(), &msg);
@@ -1915,14 +2499,8 @@ fn main() {
                         }
                     },
                 );
-            } else if ev.id == id_btc {
-                toggle_coin("bitcoin", &item_btc);
-            } else if ev.id == id_eth {
-                toggle_coin("ethereum", &item_eth);
-            } else if ev.id == id_xmr {
-                toggle_coin("monero", &item_xmr);
-            } else if ev.id == id_kas {
-                toggle_coin("kaspa", &item_kas);
+            } else if ev.id == id_choose_coins {
+                picker.open(&enabled_coins);
             } else if ev.id == id_charts {
                 show_charts = !show_charts;
                 item_charts.set_checked(show_charts);
