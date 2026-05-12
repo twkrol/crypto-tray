@@ -9,7 +9,7 @@
 
 A small Windows application showing live cryptocurrency prices (BTC, ETH, XMR, KAS) as a floating widget that sits above the taskbar, plus a tray icon.
 
-Written in Rust, compiles to a native x86-64 `.exe` (~2 MB).
+Written in Rust, compiles to a native `.exe` (~2 MB). Releases ship both **x64** and **ARM64** builds — pick the one matching your Windows install.
 
 ## Features
 
@@ -26,7 +26,7 @@ Written in Rust, compiles to a native x86-64 `.exe` (~2 MB).
 
 ## Requirements
 
-- Windows 10 or 11 (x86-64)
+- Windows 10 or 11 (x86-64 or ARM64)
 - To build: Rust toolchain (stable)
 
 ## Build

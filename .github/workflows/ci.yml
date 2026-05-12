@@ -10,21 +10,33 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            rust_target: x86_64-pc-windows-msvc
+          - arch: arm64
+            rust_target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust_target }}
 
       - name: Build (release)
-        run: cargo build --release --verbose
+        run: cargo build --release --verbose --target ${{ matrix.rust_target }}
 
       - name: Upload .exe as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: crypto-tray-${{ github.sha }}
-          path: target/release/crypto-tray.exe
+          name: crypto-tray-${{ matrix.arch }}-${{ github.sha }}
+          path: target/${{ matrix.rust_target }}/release/crypto-tray.exe
           retention-days: 14

@@ -9,7 +9,7 @@
 
 Mała aplikacja na Windows pokazująca aktualne kursy kryptowalut (BTC, ETH, XMR, KAS) jako pływający widżet stale widoczny nad paskiem zadań, plus ikonę w trayu.
 
-Napisana w Rust, kompiluje się do natywnego x86-64 .exe (~2 MB).
+Napisana w Rust, kompiluje się do natywnego .exe (~2 MB). Każdy release zawiera buildy **x64** i **ARM64** — wybierz wersję pasującą do swojego Windowsa.
 
 ## Funkcje
 
@@ -26,7 +26,7 @@ Napisana w Rust, kompiluje się do natywnego x86-64 .exe (~2 MB).
 
 ## Wymagania
 
-- Windows 10 lub 11 (x86-64)
+- Windows 10 lub 11 (x86-64 lub ARM64)
 - Do zbudowania: Rust toolchain (stable)
 
 ## Build

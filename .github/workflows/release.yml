@@ -10,8 +10,22 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Build job runs once per architecture. Each one cross-compiles from the
+  # windows-latest runner (which ships MSVC v143 with both x64 and ARM64
+  # build tools) and uploads its ZIP / MSI / raw .exe as workflow artifacts.
+  # A separate release job downstream collects them all and creates a
+  # single GitHub Release — this avoids the two matrix jobs racing to
+  # create the same release.
+  build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            rust_target: x86_64-pc-windows-msvc
+          - arch: arm64
+            rust_target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -30,12 +44,18 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
+        with:
+          # Distinct cache per architecture so x64 and arm64 don't fight
+          # over the same target/ directory keys.
+          key: ${{ matrix.rust_target }}
 
       - name: Build (release)
-        run: cargo build --release --verbose
+        run: cargo build --release --verbose --target ${{ matrix.rust_target }}
 
       - name: Install WiX Toolset
         run: choco install wixtoolset --no-progress -y
@@ -43,15 +63,18 @@ jobs:
       - name: Install cargo-wix
         run: cargo install cargo-wix --version "~0.3" --locked
 
+      # cargo-wix picks up the binary from target/<triple>/release/ when
+      # --target is set, and forwards -arch arm64 to candle.exe for ARM64
+      # targets so the resulting MSI is platform-correct.
       - name: Build MSI installer
-        run: cargo wix --no-build --nocapture
+        run: cargo wix --no-build --nocapture --target ${{ matrix.rust_target }}
 
       - name: Stage release artifacts
         shell: pwsh
         run: |
-          $stage = "crypto-tray-${{ github.ref_name }}-windows-x64"
+          $stage = "crypto-tray-${{ github.ref_name }}-windows-${{ matrix.arch }}"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item target\release\crypto-tray.exe $stage\
+          Copy-Item target\${{ matrix.rust_target }}\release\crypto-tray.exe $stage\
           Copy-Item README.md $stage\
           Copy-Item LICENSE $stage\
           Compress-Archive -Path "$stage\*" -DestinationPath "$stage.zip"
@@ -61,13 +84,38 @@ jobs:
           if (-not $msi) { throw "No MSI found under target\wix" }
           Move-Item $msi.FullName "$stage.msi"
 
+          # Also publish the raw exe — needs the arch suffix so the two
+          # matrix jobs don't clobber each other when artifacts land in
+          # the release.
+          Copy-Item target\${{ matrix.rust_target }}\release\crypto-tray.exe "$stage.exe"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-tray-${{ matrix.arch }}
+          path: |
+            crypto-tray-${{ github.ref_name }}-windows-${{ matrix.arch }}.zip
+            crypto-tray-${{ github.ref_name }}-windows-${{ matrix.arch }}.msi
+            crypto-tray-${{ github.ref_name }}-windows-${{ matrix.arch }}.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          # Both matrix jobs uploaded under different artifact names;
+          # merge-multiple flattens them into a single dist/ directory.
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            crypto-tray-${{ github.ref_name }}-windows-x64.zip
-            crypto-tray-${{ github.ref_name }}-windows-x64.msi
-            target/release/crypto-tray.exe
+          files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
