@@ -244,29 +244,47 @@ struct CoinListEntry {
     name: String,
 }
 
+/// How many coins from the top of the market-cap ranking we keep in the
+/// catalog. /coins/list (which we used before) returned ~15 k entries —
+/// way too many; the long tail is mostly scam/dead projects. /coins/markets
+/// with this `per_page` gives us the recognisable coins users actually want
+/// to pick from, sorted by market cap.
+const CATALOG_LIMIT: usize = 200;
+
 fn coin_catalog_path() -> Option<PathBuf> {
+    // File name deliberately differs from the previous full-catalog cache so
+    // that an existing 15 k-entry `coin_catalog.txt` is ignored instead of
+    // reused. The old file is left on disk (harmless, ~2 MB) for users to
+    // delete manually if they care.
     std::env::var_os("APPDATA")
-        .map(|d| PathBuf::from(d).join("CryptoTray").join("coin_catalog.txt"))
+        .map(|d| PathBuf::from(d).join("CryptoTray").join("coin_catalog_top.txt"))
 }
 
-/// Fetch every coin known to CoinGecko (~15 000 entries, ~2 MB JSON).
-/// Returns None on any HTTP / parse failure — the caller falls back to
-/// either an on-disk cache or to BUILTIN_COINS.
+/// Fetch the top-N coins by market cap from CoinGecko. Returns None on any
+/// HTTP / parse failure — the caller falls back to either an on-disk cache
+/// or to BUILTIN_COINS. The API returns entries already sorted by market
+/// cap descending, so the picker shows the recognisable coins (BTC, ETH,
+/// USDT, …) at the top of the unfiltered view.
 fn fetch_coin_catalog() -> Option<Vec<CoinMeta>> {
-    let resp = ureq::get("https://api.coingecko.com/api/v3/coins/list")
+    let url = format!(
+        "https://api.coingecko.com/api/v3/coins/markets\
+         ?vs_currency=usd&order=market_cap_desc&per_page={}&page=1",
+        CATALOG_LIMIT
+    );
+    let resp = ureq::get(&url)
         .set("User-Agent", concat!("crypto-tray/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/json")
         .timeout(Duration::from_secs(30))
         .call()
         .ok()?;
+    // `/coins/markets` returns CoinListEntry plus extra fields (price,
+    // market_cap, image, …) — serde ignores unknown fields by default so
+    // the same struct works for both endpoints.
     let entries: Vec<CoinListEntry> = resp.into_json().ok()?;
-    let mut metas: Vec<CoinMeta> = entries
+    let metas: Vec<CoinMeta> = entries
         .into_iter()
         .map(|e| make_coin_meta(e.id, e.symbol.to_uppercase(), e.name))
         .collect();
-    // Alphabetical by name — the picker has a text-search box, so list order
-    // mostly matters when the search is empty.
-    metas.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Some(metas)
 }
 
