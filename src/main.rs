@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -23,6 +23,36 @@ const COINGECKO_URL: &str = "https://api.coingecko.com/api/v3/simple/price\
                              &vs_currencies=usd,pln&include_24hr_change=true";
 const APP_NAME: &str = "Crypto Tray";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// --- localization (PL/EN, auto-detected from Windows UI language) ----------
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Lang {
+    Pl,
+    #[default]
+    En,
+}
+
+static LANG: OnceLock<Lang> = OnceLock::new();
+
+fn lang() -> Lang {
+    LANG.get().copied().unwrap_or_default()
+}
+
+/// Detect the Windows UI language. Returns Lang::Pl when the system's
+/// primary UI language is Polish, Lang::En otherwise (Polish is the only
+/// translated language so far; everything else falls back to English).
+#[cfg(windows)]
+fn detect_lang() -> Lang {
+    use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+    const LANG_POLISH: u16 = 0x15; // PRIMARYLANGID for Polish
+    let lcid = unsafe { GetUserDefaultUILanguage() };
+    if (lcid & 0x3FF) == LANG_POLISH {
+        Lang::Pl
+    } else {
+        Lang::En
+    }
+}
 const DEFAULT_INTERVAL_SECS: u64 = 60;
 
 const RIGHT_MARGIN_PX: i32 = 300;
@@ -150,10 +180,14 @@ fn fetch_price() -> Result<Prices, String> {
         .set("Accept", "application/json")
         .timeout(Duration::from_secs(15))
         .call()
-        .map_err(|e| format!("Błąd połączenia: {e}"))?;
-    let parsed: Prices = resp
-        .into_json()
-        .map_err(|e| format!("Błąd parsowania JSON: {e}"))?;
+        .map_err(|e| match lang() {
+            Lang::Pl => format!("Błąd połączenia: {e}"),
+            Lang::En => format!("Connection error: {e}"),
+        })?;
+    let parsed: Prices = resp.into_json().map_err(|e| match lang() {
+        Lang::Pl => format!("Błąd parsowania JSON: {e}"),
+        Lang::En => format!("JSON parse error: {e}"),
+    })?;
     Ok(parsed)
 }
 
@@ -171,12 +205,16 @@ fn fmt_change(c: Option<f64>) -> String {
 
 fn elapsed_human(t: Instant) -> String {
     let secs = t.elapsed().as_secs();
+    let ago = match lang() {
+        Lang::Pl => "temu",
+        Lang::En => "ago",
+    };
     if secs < 60 {
-        format!("{secs} s temu")
+        format!("{secs} s {ago}")
     } else if secs < 3600 {
-        format!("{} min {} s temu", secs / 60, secs % 60)
+        format!("{} min {} s {ago}", secs / 60, secs % 60)
     } else {
-        format!("{} h {} min temu", secs / 3600, (secs % 3600) / 60)
+        format!("{} h {} min {ago}", secs / 3600, (secs % 3600) / 60)
     }
 }
 
@@ -202,7 +240,10 @@ fn format_price_message(
 
     let last_str = match *last {
         Some(t) => elapsed_human(t),
-        None => "nigdy".to_string(),
+        None => match lang() {
+            Lang::Pl => "nigdy".to_string(),
+            Lang::En => "never".to_string(),
+        },
     };
 
     match data.as_ref() {
@@ -213,23 +254,58 @@ fn format_price_message(
                 .filter_map(|c| p.get(c.id).map(|d| format_coin_block(c.name, c.ticker, d)))
                 .collect();
             if blocks.is_empty() {
-                "Brak wybranych kryptowalut.\nZaznacz przynajmniej jedną w menu.".to_string()
+                match lang() {
+                    Lang::Pl => {
+                        "Brak wybranych kryptowalut.\nZaznacz przynajmniej jedną w menu."
+                            .to_string()
+                    }
+                    Lang::En => {
+                        "No cryptocurrencies selected.\nPick at least one from the menu."
+                            .to_string()
+                    }
+                }
             } else {
-                format!(
-                    "Aktualne kursy kryptowalut:\n\n{}\n\n\
-                     Ostatnia aktualizacja: {}\n\
-                     Interwał odświeżania: {} s\n\
-                     Źródło: CoinGecko",
-                    blocks.join("\n\n"),
-                    last_str,
-                    interval_secs,
-                )
+                match lang() {
+                    Lang::Pl => format!(
+                        "Aktualne kursy kryptowalut:\n\n{}\n\n\
+                         Ostatnia aktualizacja: {}\n\
+                         Interwał odświeżania: {} s\n\
+                         Źródło: CoinGecko",
+                        blocks.join("\n\n"),
+                        last_str,
+                        interval_secs,
+                    ),
+                    Lang::En => format!(
+                        "Current cryptocurrency prices:\n\n{}\n\n\
+                         Last update: {}\n\
+                         Refresh interval: {} s\n\
+                         Source: CoinGecko",
+                        blocks.join("\n\n"),
+                        last_str,
+                        interval_secs,
+                    ),
+                }
             }
         }
-        Some(Err(e)) => format!(
-            "Nie udało się pobrać kursów.\n\n{e}\n\nOstatnia próba: {last_str}"
-        ),
-        None => "Pobieranie kursów...\nSpróbuj ponownie za chwilę.".to_string(),
+        Some(Err(e)) => match lang() {
+            Lang::Pl => format!(
+                "Nie udało się pobrać kursów.\n\n{e}\n\nOstatnia próba: {last_str}"
+            ),
+            Lang::En => format!(
+                "Failed to fetch prices.\n\n{e}\n\nLast attempt: {last_str}"
+            ),
+        },
+        None => match lang() {
+            Lang::Pl => "Pobieranie kursów...\nSpróbuj ponownie za chwilę.".to_string(),
+            Lang::En => "Loading prices...\nTry again shortly.".to_string(),
+        },
+    }
+}
+
+fn prices_title() -> String {
+    match lang() {
+        Lang::Pl => format!("{APP_NAME} – kursy"),
+        Lang::En => format!("{APP_NAME} – prices"),
     }
 }
 
@@ -251,13 +327,22 @@ fn format_tooltip(state: &AppState, enabled: &HashSet<String>) -> String {
                 })
                 .collect();
             if lines.is_empty() {
-                format!("{APP_NAME} – brak wybranych monet")
+                match lang() {
+                    Lang::Pl => format!("{APP_NAME} – brak wybranych monet"),
+                    Lang::En => format!("{APP_NAME} – no coins selected"),
+                }
             } else {
                 lines.join("\n")
             }
         }
-        Some(Err(_)) => format!("{APP_NAME} – brak danych"),
-        None => format!("{APP_NAME} – pobieranie..."),
+        Some(Err(_)) => match lang() {
+            Lang::Pl => format!("{APP_NAME} – brak danych"),
+            Lang::En => format!("{APP_NAME} – no data"),
+        },
+        None => match lang() {
+            Lang::Pl => format!("{APP_NAME} – pobieranie..."),
+            Lang::En => format!("{APP_NAME} – loading..."),
+        },
     }
 }
 
@@ -905,28 +990,49 @@ fn check_update() -> String {
     {
         Ok(r) => r,
         Err(e) => {
-            return format!("Nie udało się sprawdzić aktualizacji.\n\n{e}");
+            return match lang() {
+                Lang::Pl => format!("Nie udało się sprawdzić aktualizacji.\n\n{e}"),
+                Lang::En => format!("Failed to check for updates.\n\n{e}"),
+            };
         }
     };
     let release: GitHubRelease = match resp.into_json() {
         Ok(r) => r,
         Err(e) => {
-            return format!("Nie udało się przetworzyć odpowiedzi GitHub.\n\n{e}");
+            return match lang() {
+                Lang::Pl => format!("Nie udało się przetworzyć odpowiedzi GitHub.\n\n{e}"),
+                Lang::En => format!("Failed to parse GitHub response.\n\n{e}"),
+            };
         }
     };
     let latest = release.tag_name.trim_start_matches('v').to_string();
     let current = env!("CARGO_PKG_VERSION");
-    match version_cmp(&latest, current) {
-        std::cmp::Ordering::Greater => format!(
+    match (version_cmp(&latest, current), lang()) {
+        (std::cmp::Ordering::Greater, Lang::Pl) => format!(
             "Dostępna jest nowsza wersja!\n\n\
              Aktualna:   {current}\n\
              Najnowsza:  {latest}\n\n\
              Pobierz: {}",
             release.html_url
         ),
-        std::cmp::Ordering::Equal => format!("Masz najnowszą wersję ({current})."),
-        std::cmp::Ordering::Less => format!(
+        (std::cmp::Ordering::Greater, Lang::En) => format!(
+            "A newer version is available!\n\n\
+             Current:  {current}\n\
+             Latest:   {latest}\n\n\
+             Download: {}",
+            release.html_url
+        ),
+        (std::cmp::Ordering::Equal, Lang::Pl) => {
+            format!("Masz najnowszą wersję ({current}).")
+        }
+        (std::cmp::Ordering::Equal, Lang::En) => {
+            format!("You have the latest version ({current}).")
+        }
+        (std::cmp::Ordering::Less, Lang::Pl) => format!(
             "Twoja wersja ({current}) jest nowsza niż ostatni release ({latest})."
+        ),
+        (std::cmp::Ordering::Less, Lang::En) => format!(
+            "Your version ({current}) is newer than the latest release ({latest})."
         ),
     }
 }
@@ -936,7 +1042,11 @@ fn check_update() -> String {
 fn spawn_update_check() {
     std::thread::spawn(|| {
         let msg = check_update();
-        show_message(&format!("{APP_NAME} – aktualizacje"), &msg);
+        let title = match lang() {
+            Lang::Pl => format!("{APP_NAME} – aktualizacje"),
+            Lang::En => format!("{APP_NAME} – updates"),
+        };
+        show_message(&title, &msg);
     });
 }
 
@@ -1006,7 +1116,10 @@ fn enable_autostart(interval_secs: u64) -> Result<(), String> {
         RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
     };
 
-    let exe = std::env::current_exe().map_err(|e| format!("Brak ścieżki .exe: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| match lang() {
+        Lang::Pl => format!("Brak ścieżki .exe: {e}"),
+        Lang::En => format!("Cannot resolve .exe path: {e}"),
+    })?;
     let exe_str = exe.to_string_lossy().into_owned();
     let cmd = format!("\"{}\" {}", exe_str, interval_secs);
     let cmd_w: Vec<u16> = OsStr::new(&cmd)
@@ -1027,7 +1140,10 @@ fn enable_autostart(interval_secs: u64) -> Result<(), String> {
             &mut hkey,
         );
         if r != 0 {
-            return Err(format!("RegOpenKeyExW: błąd {r}"));
+            return Err(match lang() {
+                Lang::Pl => format!("RegOpenKeyExW: błąd {r}"),
+                Lang::En => format!("RegOpenKeyExW: error {r}"),
+            });
         }
         let r = RegSetValueExW(
             hkey,
@@ -1064,7 +1180,10 @@ fn disable_autostart() -> Result<(), String> {
             &mut hkey,
         );
         if r != 0 {
-            return Err(format!("RegOpenKeyExW: błąd {r}"));
+            return Err(match lang() {
+                Lang::Pl => format!("RegOpenKeyExW: błąd {r}"),
+                Lang::En => format!("RegOpenKeyExW: error {r}"),
+            });
         }
         let r = RegDeleteValueW(hkey, value_name.as_ptr());
         RegCloseKey(hkey);
@@ -1076,10 +1195,11 @@ fn disable_autostart() -> Result<(), String> {
 }
 
 fn autostart_label(enabled: bool) -> &'static str {
-    if enabled {
-        "Usuń z autostartu"
-    } else {
-        "Zainstaluj w autostarcie"
+    match (lang(), enabled) {
+        (Lang::Pl, true) => "Usuń z autostartu",
+        (Lang::Pl, false) => "Zainstaluj w autostarcie",
+        (Lang::En, true) => "Remove from startup",
+        (Lang::En, false) => "Add to startup",
     }
 }
 
@@ -1417,6 +1537,10 @@ fn render_widget(
 // ----------------------------------------------------------------------------
 
 fn main() {
+    // Resolve UI language once at startup — every translatable string later
+    // calls lang() and matches against the detected value.
+    let _ = LANG.set(detect_lang());
+
     let interval_secs: u64 = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
@@ -1469,9 +1593,39 @@ fn main() {
     spawn_chart_thread(charts.clone(), charts_dirty.clone());
 
     // --- tray icon + menu --------------------------------------------------
+    // Static menu labels, all translatable.
+    let label_show = match lang() {
+        Lang::Pl => "Pokaż kursy",
+        Lang::En => "Show prices",
+    };
+    let label_refresh = match lang() {
+        Lang::Pl => "Odśwież teraz",
+        Lang::En => "Refresh now",
+    };
+    let label_charts = match lang() {
+        Lang::Pl => "Wykresy",
+        Lang::En => "Charts",
+    };
+    let label_refresh_icons = match lang() {
+        Lang::Pl => "Odśwież ikony",
+        Lang::En => "Refresh icons",
+    };
+    let label_check_update = match lang() {
+        Lang::Pl => "Sprawdź aktualizacje",
+        Lang::En => "Check for updates",
+    };
+    let label_about = match lang() {
+        Lang::Pl => "O programie...",
+        Lang::En => "About...",
+    };
+    let label_quit = match lang() {
+        Lang::Pl => "Zakończ",
+        Lang::En => "Quit",
+    };
+
     let menu = Menu::new();
-    let item_show = MenuItem::new("Pokaż kursy", true, None);
-    let item_refresh = MenuItem::new("Odśwież teraz", true, None);
+    let item_show = MenuItem::new(label_show, true, None);
+    let item_refresh = MenuItem::new(label_refresh, true, None);
     let sep1 = PredefinedMenuItem::separator();
 
     let item_btc = CheckMenuItem::new("BTC", true, enabled_coins.contains("bitcoin"), None);
@@ -1480,15 +1634,15 @@ fn main() {
     let item_kas = CheckMenuItem::new("KAS", true, enabled_coins.contains("kaspa"), None);
 
     let sep2 = PredefinedMenuItem::separator();
-    let item_charts = CheckMenuItem::new("Wykresy", true, show_charts, None);
-    let item_refresh_icons = MenuItem::new("Odśwież ikony", true, None);
-    let item_check_update = MenuItem::new("Sprawdź aktualizacje", true, None);
+    let item_charts = CheckMenuItem::new(label_charts, true, show_charts, None);
+    let item_refresh_icons = MenuItem::new(label_refresh_icons, true, None);
+    let item_check_update = MenuItem::new(label_check_update, true, None);
     let sep3 = PredefinedMenuItem::separator();
-    let item_about = MenuItem::new("O programie...", true, None);
+    let item_about = MenuItem::new(label_about, true, None);
     let item_autostart =
         MenuItem::new(autostart_label(is_autostart_enabled()), true, None);
     let sep4 = PredefinedMenuItem::separator();
-    let item_quit = MenuItem::new("Zakończ", true, None);
+    let item_quit = MenuItem::new(label_quit, true, None);
 
     menu.append_items(&[
         &item_show,
@@ -1525,10 +1679,14 @@ fn main() {
 
     let menu_for_widget = menu.clone();
 
+    let initial_tooltip = match lang() {
+        Lang::Pl => format!("{APP_NAME} – pobieranie..."),
+        Lang::En => format!("{APP_NAME} – loading..."),
+    };
     let mut tray: Option<TrayIcon> = Some(
         TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip(format!("{APP_NAME} – pobieranie..."))
+            .with_tooltip(initial_tooltip)
             .with_icon(create_tray_icon())
             .build()
             .expect("Failed to build tray icon"),
@@ -1638,7 +1796,7 @@ fn main() {
                                         &enabled_coins,
                                         interval_secs,
                                     );
-                                    show_message(&format!("{APP_NAME} – kursy"), &msg);
+                                    show_message(&prices_title(), &msg);
                                 } else {
                                     last_left_press = Some(now);
                                     let _ = widget.drag_window();
@@ -1743,12 +1901,19 @@ fn main() {
 
             if ev.id == id_show {
                 let msg = format_price_message(&state, &enabled_coins, interval_secs);
-                show_message(&format!("{APP_NAME} – kursy"), &msg);
+                show_message(&prices_title(), &msg);
             } else if ev.id == id_refresh {
                 let _ = refresh_tx.send(());
                 show_message(
                     APP_NAME,
-                    "Wymuszono odświeżenie kursów.\nNowe dane pojawią się za chwilę.",
+                    match lang() {
+                        Lang::Pl => {
+                            "Wymuszono odświeżenie kursów.\nNowe dane pojawią się za chwilę."
+                        }
+                        Lang::En => {
+                            "Manual price refresh triggered.\nNew data will appear shortly."
+                        }
+                    },
                 );
             } else if ev.id == id_btc {
                 toggle_coin("bitcoin", &item_btc);
@@ -1776,11 +1941,18 @@ fn main() {
                 widget.request_redraw();
                 show_message(
                     APP_NAME,
-                    &format!(
-                        "Pobrano {} z {} ikon z CoinGecko.",
-                        count,
-                        COINS.len()
-                    ),
+                    &match lang() {
+                        Lang::Pl => format!(
+                            "Pobrano {} z {} ikon z CoinGecko.",
+                            count,
+                            COINS.len()
+                        ),
+                        Lang::En => format!(
+                            "Downloaded {} of {} icons from CoinGecko.",
+                            count,
+                            COINS.len()
+                        ),
+                    },
                 );
             } else if ev.id == id_check_update {
                 spawn_update_check();
@@ -1797,37 +1969,74 @@ fn main() {
                         item_autostart.set_text(autostart_label(now_enabled));
                         show_message(
                             APP_NAME,
-                            if now_enabled {
-                                "Aplikacja będzie uruchamiana przy starcie systemu."
-                            } else {
-                                "Aplikacja została usunięta z autostartu."
+                            match (lang(), now_enabled) {
+                                (Lang::Pl, true) => {
+                                    "Aplikacja będzie uruchamiana przy starcie systemu."
+                                }
+                                (Lang::Pl, false) => {
+                                    "Aplikacja została usunięta z autostartu."
+                                }
+                                (Lang::En, true) => {
+                                    "The app will start automatically with Windows."
+                                }
+                                (Lang::En, false) => {
+                                    "The app was removed from startup."
+                                }
                             },
                         );
                     }
                     Err(e) => {
                         show_message(
                             APP_NAME,
-                            &format!("Nie udało się zmienić autostartu:\n\n{e}"),
+                            &match lang() {
+                                Lang::Pl => {
+                                    format!("Nie udało się zmienić autostartu:\n\n{e}")
+                                }
+                                Lang::En => {
+                                    format!("Failed to change startup setting:\n\n{e}")
+                                }
+                            },
                         );
                     }
                 }
             } else if ev.id == id_about {
-                let about = format!(
-                    "{APP_NAME}\n\
-                     Wersja {APP_VERSION}\n\n\
-                     Mała aplikacja pokazująca aktualne kursy kryptowalut.\n\
-                     Obsługiwane: BTC, ETH, XMR, KAS\n\
-                     (zaznacz w menu, które pokazywać)\n\n\
-                     • Pływający widżet – stale widoczny nad paskiem zadań\n\
-                     • Lewy klik widżetu i przeciągnij – zmień pozycję\n\
-                     • Podwójny klik widżetu – pełne informacje\n\
-                     • Prawy klik widżetu – menu kontekstowe\n\
-                     • Ikona w trayu – tooltip z kursami, prawy klik = menu\n\
-                     • Interwał odświeżania: {interval_secs} s\n\n\
-                     Źródło danych: api.coingecko.com (publiczne, darmowe API)\n\
-                     Napisane w języku Rust."
-                );
-                show_message(&format!("O programie – {APP_NAME}"), &about);
+                let about = match lang() {
+                    Lang::Pl => format!(
+                        "{APP_NAME}\n\
+                         Wersja {APP_VERSION}\n\n\
+                         Mała aplikacja pokazująca aktualne kursy kryptowalut.\n\
+                         Obsługiwane: BTC, ETH, XMR, KAS\n\
+                         (zaznacz w menu, które pokazywać)\n\n\
+                         • Pływający widżet – stale widoczny nad paskiem zadań\n\
+                         • Lewy klik widżetu i przeciągnij – zmień pozycję\n\
+                         • Podwójny klik widżetu – pełne informacje\n\
+                         • Prawy klik widżetu – menu kontekstowe\n\
+                         • Ikona w trayu – tooltip z kursami, prawy klik = menu\n\
+                         • Interwał odświeżania: {interval_secs} s\n\n\
+                         Źródło danych: api.coingecko.com (publiczne, darmowe API)\n\
+                         Napisane w języku Rust."
+                    ),
+                    Lang::En => format!(
+                        "{APP_NAME}\n\
+                         Version {APP_VERSION}\n\n\
+                         A small app showing live cryptocurrency prices.\n\
+                         Supported: BTC, ETH, XMR, KAS\n\
+                         (pick which to show from the menu)\n\n\
+                         • Floating widget — always visible above the taskbar\n\
+                         • Left-click widget + drag — move it across the screen\n\
+                         • Double-click widget — full details\n\
+                         • Right-click widget — context menu\n\
+                         • Tray icon — tooltip with prices, right-click for menu\n\
+                         • Refresh interval: {interval_secs} s\n\n\
+                         Data source: api.coingecko.com (public, free API)\n\
+                         Written in Rust."
+                    ),
+                };
+                let about_title = match lang() {
+                    Lang::Pl => format!("O programie – {APP_NAME}"),
+                    Lang::En => format!("About – {APP_NAME}"),
+                };
+                show_message(&about_title, &about);
             } else if ev.id == id_quit {
                 tray.take();
                 *control_flow = ControlFlow::Exit;
@@ -1843,7 +2052,7 @@ fn main() {
             {
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
                     let msg = format_price_message(&state, &enabled_coins, interval_secs);
-                    show_message(&format!("{APP_NAME} – kursy"), &msg);
+                    show_message(&prices_title(), &msg);
                 }
             }
         }

@@ -75,5 +75,26 @@
     </Feature>
 
     <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+
+    <!--
+      On uninstall, scrub the HKCU autostart entry the app may have created
+      from its tray menu. Custom action runs reg.exe in a deferred step with
+      Impersonate='yes' so HKCU points at the invoking user's profile (and
+      not LocalSystem's). Conditioned on REMOVE="ALL" so an upgrade does NOT
+      remove the entry — only a full uninstall does. Return='ignore' keeps
+      the uninstall going even if the registry value isn't there.
+    -->
+    <CustomAction Id='RemoveAutostartRunEntry'
+                  Directory='APPLICATIONFOLDER'
+                  ExeCommand='"[System64Folder]reg.exe" delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v CryptoTray /f'
+                  Execute='deferred'
+                  Impersonate='yes'
+                  Return='ignore'/>
+
+    <InstallExecuteSequence>
+      <Custom Action='RemoveAutostartRunEntry' After='InstallInitialize'>
+        REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
+      </Custom>
+    </InstallExecuteSequence>
   </Product>
 </Wix>

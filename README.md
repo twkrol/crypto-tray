@@ -1,29 +1,33 @@
 # Crypto Tray
 
+**English** | [Polski](README.pl.md)
+
 [![CI](https://github.com/twkrol/crypto-tray/actions/workflows/ci.yml/badge.svg)](https://github.com/twkrol/crypto-tray/actions/workflows/ci.yml)
 [![Release](https://github.com/twkrol/crypto-tray/actions/workflows/release.yml/badge.svg)](https://github.com/twkrol/crypto-tray/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/twkrol/crypto-tray)](https://github.com/twkrol/crypto-tray/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Mała aplikacja na Windows pokazująca aktualne kursy kryptowalut (BTC, ETH, XMR, KAS) jako pływający widżet stale widoczny nad paskiem zadań, plus ikonę w trayu.
+A small Windows application showing live cryptocurrency prices (BTC, ETH, XMR, KAS) as a floating widget that sits above the taskbar, plus a tray icon.
 
-Napisana w Rust, kompiluje się do natywnego x86-64 .exe (~2 MB).
+Written in Rust, compiles to a native x86-64 `.exe` (~2 MB).
 
-## Funkcje
+## Features
 
-- Pływający widżet z kursem USD i zmianą 24h dla wybranych monet
-- Mini-wykres cen z ostatniej godziny (sparkline) przy każdej monecie
-- Ikony krypto pobierane z CoinGecko (cache na dysku, można podmienić własnymi)
-- Ikona w trayu z tooltipem zawierającym kursy i menu kontekstowym
-- Automatyczna detekcja motywu Windows (jasny/ciemny) — widżet dopasowuje tło
-- Auto-pozycjonowanie nad paskiem zadań, dynamiczna szerokość zależna od liczby włączonych monet
-- Przeciągany myszką (lewy klik + drag)
-- Opcjonalna instalacja w autostarcie systemu
+- Floating widget with USD price and 24h change for the selected coins
+- Mini chart (sparkline) of the last hour next to each coin
+- Coin icons fetched from CoinGecko (cached on disk, can be replaced with your own)
+- Tray icon with a tooltip showing prices and a context menu
+- Auto-detects Windows theme (light/dark) — widget matches the system colour
+- Auto-detects system language (English / Polish)
+- Auto-positioning above the taskbar; widget width adapts to how many coins are enabled
+- Draggable with the mouse (left click + drag)
+- Optional install into Windows startup (autorun)
+- Update check via the GitHub Releases API
 
-## Wymagania
+## Requirements
 
-- Windows 10 lub 11 (x86-64)
-- Do zbudowania: Rust toolchain (stable)
+- Windows 10 or 11 (x86-64)
+- To build: Rust toolchain (stable)
 
 ## Build
 
@@ -31,57 +35,57 @@ Napisana w Rust, kompiluje się do natywnego x86-64 .exe (~2 MB).
 cargo build --release
 ```
 
-Wynik: `target/release/crypto-tray.exe`.
+Output: `target/release/crypto-tray.exe`.
 
-## Uruchomienie
+## Run
 
 ```bash
-crypto-tray.exe          # domyślny interwał odświeżania ceny (60 s)
-crypto-tray.exe 30       # odświeżanie co 30 s (minimum 5 s)
+crypto-tray.exe          # default price refresh interval (60 s)
+crypto-tray.exe 30       # refresh every 30 s (minimum 5 s)
 ```
 
-Po uruchomieniu na ekranie pojawi się widżet umieszczony domyślnie po prawej stronie paska zadań, plus ikona w systemowym trayu.
+After launch you'll see the widget placed near the right edge of the taskbar by default, plus an icon in the system tray.
 
-## Interakcja
+## Interaction
 
-| Akcja | Efekt |
+| Action | Effect |
 |---|---|
-| Lewy klik widżetu + przeciągnięcie | zmiana pozycji na ekranie |
-| Podwójny klik widżetu | popup z pełnymi szczegółami (USD i PLN, 24h zmiana) |
-| Prawy klik widżetu | menu kontekstowe (te same opcje co w trayu) |
-| Lewy klik ikony w trayu | popup z pełnymi szczegółami |
-| Najechanie na ikonę w trayu | tooltip z aktualnymi kursami |
-| Prawy klik ikony w trayu | menu (toggle monet, wykresy, autostart, odśwież ikony, info) |
+| Left-click on widget + drag | move it across the screen |
+| Double-click on widget | popup with full details (USD and PLN, 24h change) |
+| Right-click on widget | context menu (same options as the tray menu) |
+| Left-click on tray icon | popup with full details |
+| Hover the tray icon | tooltip with current prices |
+| Right-click on tray icon | menu (toggle coins, charts, autostart, refresh icons, info) |
 
-## Konfiguracja użytkownika
+## User configuration
 
-Ustawienia zapisują się w `%APPDATA%\CryptoTray\`:
+Settings live in `%APPDATA%\CryptoTray\`:
 
-- `coins.txt` — lista włączonych monet (po jednym CoinGecko id w linii)
-- `charts_off` — flaga, obecność pliku = wykresy wyłączone
-- `icons/<id>.png` — cache ikon. Możesz wrzucić tu własny PNG (kwadratowy, transparent bg) o nazwie `bitcoin.png`, `ethereum.png`, `monero.png` lub `kaspa.png`, żeby zastąpić wersję pobraną z CoinGecko.
+- `coins.txt` — list of enabled coins (one CoinGecko id per line)
+- `charts_off` — flag file; if it exists, sparklines are disabled
+- `icons/<id>.png` — icon cache. Drop in your own square PNG with a transparent background named `bitcoin.png`, `ethereum.png`, `monero.png` or `kaspa.png` to replace the one fetched from CoinGecko.
 
-Autostart: wpis pod `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CryptoTray`. Włączany/wyłączany z menu (nie wymaga praw administratora).
+Autostart entry lives under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CryptoTray`. Toggled from the menu (no admin rights required). It's automatically removed when the app is uninstalled via the MSI.
 
-## Źródła danych
+## Data sources
 
-[CoinGecko Public API v3](https://www.coingecko.com/en/api) — free tier, bez klucza:
+[CoinGecko Public API v3](https://www.coingecko.com/en/api) — free tier, no API key:
 
-- `/simple/price` — bieżące kursy (USD, PLN, 24h zmiana)
-- `/coins/markets` — URL-e do logo monet
-- `/coins/{id}/market_chart/range` — historia cen z ostatniej godziny do sparkline'a
+- `/simple/price` — current prices (USD, PLN, 24h change)
+- `/coins/markets` — coin logo URLs
+- `/coins/{id}/market_chart/range` — last-hour price history for sparklines
 
-Logo monet są własnością ich projektów.
+Coin logos are the property of their respective projects.
 
 ## Stack
 
-- [`tao`](https://crates.io/crates/tao) — okna i pętla zdarzeń
-- [`tray-icon`](https://crates.io/crates/tray-icon) + [`muda`](https://crates.io/crates/muda) — ikona w trayu i menu
-- [`softbuffer`](https://crates.io/crates/softbuffer) — bufor pikseli do okna widżetu
-- [`png`](https://crates.io/crates/png) — dekodowanie pobranych ikon
-- [`ureq`](https://crates.io/crates/ureq) — synchroniczne HTTP/JSON (rustls)
-- [`windows-sys`](https://crates.io/crates/windows-sys) — Win32 API (GDI do renderowania tekstu Segoe UI, rejestr, taskbar, SetWindowPos)
+- [`tao`](https://crates.io/crates/tao) — windowing and event loop
+- [`tray-icon`](https://crates.io/crates/tray-icon) + [`muda`](https://crates.io/crates/muda) — system tray icon and menus
+- [`softbuffer`](https://crates.io/crates/softbuffer) — pixel buffer for the widget window
+- [`png`](https://crates.io/crates/png) — PNG decoding for downloaded icons
+- [`ureq`](https://crates.io/crates/ureq) — synchronous HTTP/JSON (rustls)
+- [`windows-sys`](https://crates.io/crates/windows-sys) — Win32 API (GDI for Segoe UI text rendering, registry, taskbar, SetWindowPos)
 
-## Licencja
+## License
 
 [MIT](LICENSE)
