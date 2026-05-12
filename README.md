@@ -1,5 +1,10 @@
 # Crypto Tray
 
+[![CI](https://github.com/twkrol/crypto-tray/actions/workflows/ci.yml/badge.svg)](https://github.com/twkrol/crypto-tray/actions/workflows/ci.yml)
+[![Release](https://github.com/twkrol/crypto-tray/actions/workflows/release.yml/badge.svg)](https://github.com/twkrol/crypto-tray/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/twkrol/crypto-tray)](https://github.com/twkrol/crypto-tray/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Mała aplikacja na Windows pokazująca aktualne kursy kryptowalut (BTC, ETH, XMR, KAS) jako pływający widżet stale widoczny nad paskiem zadań, plus ikonę w trayu.
 
 Napisana w Rust, kompiluje się do natywnego x86-64 .exe (~2 MB).

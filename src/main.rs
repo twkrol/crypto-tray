@@ -261,56 +261,15 @@ fn format_tooltip(state: &AppState, enabled: &HashSet<String>) -> String {
     }
 }
 
+/// Tray icon — uses the same stock-chart design as the .exe icon.
+/// PNG is bundled at compile time via `include_bytes!` so the running
+/// binary is self-contained (no need to find icon.ico on disk).
 fn create_tray_icon() -> tray_icon::Icon {
-    const SIZE: u32 = 32;
-    const ORANGE: [u8; 4] = [0xF7, 0x93, 0x1A, 0xFF];
-    const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
-    const TRANSPARENT: [u8; 4] = [0, 0, 0, 0];
+    const TRAY_PNG: &[u8] = include_bytes!("../assets/icon-tray.png");
 
-    let b_pattern: [&[u8; 5]; 7] = [
-        b"XXXX.",
-        b"X...X",
-        b"X...X",
-        b"XXXX.",
-        b"X...X",
-        b"X...X",
-        b"XXXX.",
-    ];
-
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    let center = SIZE as i32 / 2;
-    let radius_sq = (center - 1) * (center - 1);
-
-    for y in 0..SIZE as i32 {
-        for x in 0..SIZE as i32 {
-            let dx = x - center;
-            let dy = y - center;
-            let dist_sq = dx * dx + dy * dy;
-            let idx = ((y * SIZE as i32 + x) * 4) as usize;
-
-            let pixel = if dist_sq <= radius_sq {
-                let bx = x - (center - 5);
-                let by = y - (center - 7);
-                if (0..10).contains(&bx) && (0..14).contains(&by) {
-                    let px = (bx / 2) as usize;
-                    let py = (by / 2) as usize;
-                    if b_pattern[py][px] == b'X' {
-                        WHITE
-                    } else {
-                        ORANGE
-                    }
-                } else {
-                    ORANGE
-                }
-            } else {
-                TRANSPARENT
-            };
-
-            rgba[idx..idx + 4].copy_from_slice(&pixel);
-        }
-    }
-
-    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("Failed to build icon")
+    let (w, h, rgba) = decode_png_rgba(TRAY_PNG)
+        .expect("bundled tray icon PNG should decode");
+    tray_icon::Icon::from_rgba(rgba, w, h).expect("tray icon from rgba")
 }
 
 #[cfg(windows)]
@@ -902,6 +861,85 @@ fn draw_sparkline(
     }
 }
 
+// --- update check (GitHub Releases API) -------------------------------------
+
+const GITHUB_REPO: &str = "twkrol/crypto-tray";
+
+#[derive(Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+/// Compare two dotted version strings (e.g. "1.2.3" vs "1.2.10").
+/// Returns Ordering between numeric components.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts_a: Vec<u32> = a.split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let parts_b: Vec<u32> = b.split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let n = parts_a.len().max(parts_b.len());
+    for i in 0..n {
+        let va = parts_a.get(i).copied().unwrap_or(0);
+        let vb = parts_b.get(i).copied().unwrap_or(0);
+        match va.cmp(&vb) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// Query the GitHub API for the latest release. Returns formatted message.
+fn check_update() -> String {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+    let resp = match ureq::get(&url)
+        .set(
+            "User-Agent",
+            concat!("crypto-tray/", env!("CARGO_PKG_VERSION")),
+        )
+        .set("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(10))
+        .call()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return format!("Nie udało się sprawdzić aktualizacji.\n\n{e}");
+        }
+    };
+    let release: GitHubRelease = match resp.into_json() {
+        Ok(r) => r,
+        Err(e) => {
+            return format!("Nie udało się przetworzyć odpowiedzi GitHub.\n\n{e}");
+        }
+    };
+    let latest = release.tag_name.trim_start_matches('v').to_string();
+    let current = env!("CARGO_PKG_VERSION");
+    match version_cmp(&latest, current) {
+        std::cmp::Ordering::Greater => format!(
+            "Dostępna jest nowsza wersja!\n\n\
+             Aktualna:   {current}\n\
+             Najnowsza:  {latest}\n\n\
+             Pobierz: {}",
+            release.html_url
+        ),
+        std::cmp::Ordering::Equal => format!("Masz najnowszą wersję ({current})."),
+        std::cmp::Ordering::Less => format!(
+            "Twoja wersja ({current}) jest nowsza niż ostatni release ({latest})."
+        ),
+    }
+}
+
+/// Run the update check on a background thread and show the result via
+/// MessageBox so the main event loop isn't blocked while we hit the API.
+fn spawn_update_check() {
+    std::thread::spawn(|| {
+        let msg = check_update();
+        show_message(&format!("{APP_NAME} – aktualizacje"), &msg);
+    });
+}
+
 // --- autostart (HKCU\...\Run) -----------------------------------------------
 
 const AUTOSTART_VALUE: &str = "CryptoTray";
@@ -1444,6 +1482,7 @@ fn main() {
     let sep2 = PredefinedMenuItem::separator();
     let item_charts = CheckMenuItem::new("Wykresy", true, show_charts, None);
     let item_refresh_icons = MenuItem::new("Odśwież ikony", true, None);
+    let item_check_update = MenuItem::new("Sprawdź aktualizacje", true, None);
     let sep3 = PredefinedMenuItem::separator();
     let item_about = MenuItem::new("O programie...", true, None);
     let item_autostart =
@@ -1462,6 +1501,7 @@ fn main() {
         &sep2,
         &item_charts,
         &item_refresh_icons,
+        &item_check_update,
         &sep3,
         &item_about,
         &item_autostart,
@@ -1478,6 +1518,7 @@ fn main() {
     let id_kas = item_kas.id().clone();
     let id_charts = item_charts.id().clone();
     let id_refresh_icons = item_refresh_icons.id().clone();
+    let id_check_update = item_check_update.id().clone();
     let id_about = item_about.id().clone();
     let id_autostart = item_autostart.id().clone();
     let id_quit = item_quit.id().clone();
@@ -1741,6 +1782,8 @@ fn main() {
                         COINS.len()
                     ),
                 );
+            } else if ev.id == id_check_update {
+                spawn_update_check();
             } else if ev.id == id_autostart {
                 let was_enabled = is_autostart_enabled();
                 let result = if was_enabled {
