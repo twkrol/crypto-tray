@@ -67,7 +67,6 @@ fn detect_lang() -> Lang {
 }
 const DEFAULT_INTERVAL_SECS: u64 = 60;
 
-const RIGHT_MARGIN_PX: i32 = 300;
 const PAD_X: i32 = 10;
 const FONT_FACE: &str = "Segoe UI";
 const DOUBLE_CLICK_MS: u128 = 400;
@@ -491,6 +490,90 @@ fn save_enabled_coins(enabled: &HashSet<String>) {
             .collect();
         lines.sort();
         let _ = std::fs::write(&path, lines.join("\n"));
+    }
+}
+
+// --- user settings (right margin, font height, icon diameter) ---------------
+
+const RIGHT_MARGIN_MIN: i32 = 0;
+const RIGHT_MARGIN_MAX: i32 = 800;
+const RIGHT_MARGIN_STEP: i32 = 25;
+const FONT_H_MIN: i32 = 10;
+const FONT_H_MAX: i32 = 32;
+const FONT_H_STEP: i32 = 1;
+const ICON_D_MIN: i32 = 12;
+const ICON_D_MAX: i32 = 64;
+const ICON_D_STEP: i32 = 2;
+
+#[derive(Clone, Copy, Debug)]
+struct Settings {
+    right_margin: i32,
+    font_h: i32,
+    icon_d: i32,
+}
+
+impl Settings {
+    /// Defaults derived from the runtime widget height — keeps the look
+    /// proportional on hi-DPI taskbars (font/icon scale with available
+    /// vertical space; margin is a flat 300 px). These values are what the
+    /// app uses on first launch and what "Reset" in the Settings dialog
+    /// restores to.
+    fn defaults_for(widget_height_px: u32) -> Self {
+        Self {
+            right_margin: 300,
+            font_h: ((widget_height_px as f32) * 0.50).round().clamp(11.0, 24.0) as i32,
+            icon_d: ((widget_height_px as i32) * 7 / 10).max(20),
+        }
+    }
+
+    fn clamp(&mut self) {
+        self.right_margin = self.right_margin.clamp(RIGHT_MARGIN_MIN, RIGHT_MARGIN_MAX);
+        self.font_h = self.font_h.clamp(FONT_H_MIN, FONT_H_MAX);
+        self.icon_d = self.icon_d.clamp(ICON_D_MIN, ICON_D_MAX);
+    }
+}
+
+fn settings_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(|appdata| PathBuf::from(appdata).join("CryptoTray").join("settings.txt"))
+}
+
+fn load_settings(widget_height_px: u32) -> Settings {
+    let mut s = Settings::defaults_for(widget_height_px);
+    if let Some(path) = settings_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    if let Ok(n) = v.trim().parse::<i32>() {
+                        match k.trim() {
+                            "right_margin" => s.right_margin = n,
+                            "font_h" => s.font_h = n,
+                            "icon_d" => s.icon_d = n,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    s.clamp();
+    s
+}
+
+fn save_settings(s: &Settings) {
+    if let Some(path) = settings_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let content = format!(
+            "right_margin={}\nfont_h={}\nicon_d={}\n",
+            s.right_margin, s.font_h, s.icon_d
+        );
+        let _ = std::fs::write(&path, content);
     }
 }
 
@@ -2057,6 +2140,538 @@ fn render_picker_dib(
     }
 }
 
+// --- settings window ---------------------------------------------------------
+
+const SETTINGS_WIDTH: u32 = 380;
+const SETTINGS_HEIGHT: u32 = 280;
+const SETTINGS_HEADER_H: i32 = 44;
+const SETTINGS_FOOTER_H: i32 = 56;
+const SETTINGS_ROW_H: i32 = 50;
+const SETTINGS_PAD_X: i32 = 14;
+const SPIN_BTN: i32 = 30;
+const SPIN_VAL_W: i32 = 80;
+
+type SettingsResult = Arc<Mutex<Option<Settings>>>;
+
+struct SettingsWindow {
+    window: Arc<tao::window::Window>,
+    surface: softbuffer::Surface<Arc<tao::window::Window>, Arc<tao::window::Window>>,
+    draft: Settings,
+    /// Defaults at the time the window opened — used by the Reset button.
+    defaults: Settings,
+    visible: bool,
+    pending_result: SettingsResult,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpinHit {
+    Minus(usize),
+    Plus(usize),
+    Ok,
+    Reset,
+}
+
+impl SettingsWindow {
+    fn new(
+        event_loop: &tao::event_loop::EventLoop<()>,
+        pending_result: SettingsResult,
+        initial: Settings,
+    ) -> Self {
+        let title = match lang() {
+            Lang::Pl => "Ustawienia",
+            Lang::En => "Settings",
+        };
+        let window = Arc::new(
+            WindowBuilder::new()
+                .with_title(title)
+                .with_inner_size(tao::dpi::LogicalSize::new(
+                    SETTINGS_WIDTH as f64,
+                    SETTINGS_HEIGHT as f64,
+                ))
+                .with_resizable(false)
+                .with_visible(false)
+                .with_skip_taskbar(false)
+                .build(event_loop)
+                .expect("failed to build settings window"),
+        );
+        let context = softbuffer::Context::new(window.clone())
+            .expect("settings softbuffer ctx");
+        let surface = softbuffer::Surface::new(&context, window.clone())
+            .expect("settings surface");
+        SettingsWindow {
+            window,
+            surface,
+            draft: initial,
+            defaults: initial,
+            visible: false,
+            pending_result,
+        }
+    }
+
+    fn id(&self) -> tao::window::WindowId {
+        self.window.id()
+    }
+
+    fn open(&mut self, current: Settings, defaults: Settings) {
+        self.draft = current;
+        self.defaults = defaults;
+        self.window.set_visible(true);
+        self.visible = true;
+        let _ = self.window.set_focus();
+        self.window.request_redraw();
+    }
+
+    fn close_save(&mut self) {
+        self.draft.clamp();
+        if let Ok(mut slot) = self.pending_result.lock() {
+            *slot = Some(self.draft);
+        }
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    fn close_cancel(&mut self) {
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    /// Geometry of a row's spinner buttons. Row index 0..3.
+    fn spinner_rects(&self, row: usize) -> (i32, i32, i32, i32) {
+        let size = self.window.inner_size();
+        let w = size.width as i32;
+        let y_top = SETTINGS_HEADER_H + (row as i32) * SETTINGS_ROW_H;
+        let plus_x = w - SETTINGS_PAD_X - SPIN_BTN;
+        let val_x = plus_x - SPIN_VAL_W;
+        let minus_x = val_x - SPIN_BTN;
+        let btn_y = y_top + (SETTINGS_ROW_H - SPIN_BTN) / 2;
+        (minus_x, plus_x, val_x, btn_y)
+    }
+
+    fn hit_test(&self, x: i32, y: i32) -> Option<SpinHit> {
+        // Footer buttons first.
+        let size = self.window.inner_size();
+        let w = size.width as i32;
+        let h = size.height as i32;
+        let btn_y = h - SETTINGS_FOOTER_H + (SETTINGS_FOOTER_H - 32) / 2;
+        let ok_w = 90;
+        let ok_x = w - SETTINGS_PAD_X - ok_w;
+        if x >= ok_x && x < ok_x + ok_w && y >= btn_y && y < btn_y + 32 {
+            return Some(SpinHit::Ok);
+        }
+        let reset_w = 90;
+        let reset_x = ok_x - 12 - reset_w;
+        if x >= reset_x && x < reset_x + reset_w && y >= btn_y && y < btn_y + 32 {
+            return Some(SpinHit::Reset);
+        }
+        // Spinner rows: 3 settings.
+        for row in 0..3usize {
+            let (minus_x, plus_x, _val_x, by) = self.spinner_rects(row);
+            if y >= by && y < by + SPIN_BTN {
+                if x >= minus_x && x < minus_x + SPIN_BTN {
+                    return Some(SpinHit::Minus(row));
+                }
+                if x >= plus_x && x < plus_x + SPIN_BTN {
+                    return Some(SpinHit::Plus(row));
+                }
+            }
+        }
+        None
+    }
+
+    fn step_for(row: usize) -> i32 {
+        match row {
+            0 => RIGHT_MARGIN_STEP,
+            1 => FONT_H_STEP,
+            2 => ICON_D_STEP,
+            _ => 1,
+        }
+    }
+
+    fn adjust(&mut self, row: usize, delta_steps: i32) {
+        let step = Self::step_for(row);
+        match row {
+            0 => {
+                self.draft.right_margin = (self.draft.right_margin + delta_steps * step)
+                    .clamp(RIGHT_MARGIN_MIN, RIGHT_MARGIN_MAX);
+            }
+            1 => {
+                self.draft.font_h =
+                    (self.draft.font_h + delta_steps * step).clamp(FONT_H_MIN, FONT_H_MAX);
+            }
+            2 => {
+                self.draft.icon_d =
+                    (self.draft.icon_d + delta_steps * step).clamp(ICON_D_MIN, ICON_D_MAX);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_click(&mut self, x: i32, y: i32) {
+        match self.hit_test(x, y) {
+            Some(SpinHit::Minus(r)) => {
+                self.adjust(r, -1);
+                self.window.request_redraw();
+            }
+            Some(SpinHit::Plus(r)) => {
+                self.adjust(r, 1);
+                self.window.request_redraw();
+            }
+            Some(SpinHit::Reset) => {
+                self.draft = self.defaults;
+                self.window.request_redraw();
+            }
+            Some(SpinHit::Ok) => {
+                self.close_save();
+            }
+            None => {}
+        }
+    }
+
+    fn render(&mut self, theme: Theme, _is_dark: bool, font_h: i32) {
+        let size = self.window.inner_size();
+        let w = size.width.max(1);
+        let h = size.height.max(1);
+        let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
+            return;
+        };
+        if self.surface.resize(nz_w, nz_h).is_err() {
+            return;
+        }
+        let Ok(mut buf) = self.surface.buffer_mut() else {
+            return;
+        };
+        render_settings_dib(&mut buf, w, h, &self.draft, theme, font_h);
+        let _ = buf.present();
+    }
+}
+
+#[cfg(windows)]
+fn render_settings_dib(
+    buffer: &mut [u32],
+    w: u32,
+    h: u32,
+    draft: &Settings,
+    theme: Theme,
+    font_h: i32,
+) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+        CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
+        DEFAULT_PITCH, DIB_RGB_COLORS, DeleteDC, DeleteObject, FF_SWISS, FW_BOLD, FW_NORMAL,
+        FillRect, GetDC, GetTextMetricsW, OUT_DEFAULT_PRECIS, RGBQUAD, ReleaseDC, SelectObject,
+        SetBkMode, TEXTMETRICW, TRANSPARENT,
+    };
+
+    let wu = w as usize;
+    let hu = h as usize;
+    let pixel_count = wu * hu;
+
+    let border = blend_rgb(theme.bg, theme.text, 0.35);
+    let btn_bg = blend_rgb(theme.bg, theme.text, 0.10);
+
+    unsafe {
+        let screen_dc = GetDC(null_mut());
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        ReleaseDC(null_mut(), screen_dc);
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB as u32,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
+        };
+        let mut dib_bits: *mut core::ffi::c_void = null_mut();
+        let dib = CreateDIBSection(
+            mem_dc,
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut dib_bits,
+            null_mut(),
+            0,
+        );
+        if dib.is_null() || dib_bits.is_null() {
+            DeleteDC(mem_dc);
+            buffer[..pixel_count].fill(theme.bg);
+            return;
+        }
+        let old_dib = SelectObject(mem_dc, dib as _);
+
+        // Background.
+        let brush_bg = CreateSolidBrush(rgb_to_colorref(theme.bg));
+        let full = RECT {
+            left: 0,
+            top: 0,
+            right: w as i32,
+            bottom: h as i32,
+        };
+        FillRect(mem_dc, &full, brush_bg);
+        DeleteObject(brush_bg as _);
+
+        // Separators.
+        let sep = CreateSolidBrush(rgb_to_colorref(border));
+        FillRect(
+            mem_dc,
+            &RECT {
+                left: 0,
+                top: SETTINGS_HEADER_H - 1,
+                right: w as i32,
+                bottom: SETTINGS_HEADER_H,
+            },
+            sep,
+        );
+        let sep_bot = h as i32 - SETTINGS_FOOTER_H;
+        FillRect(
+            mem_dc,
+            &RECT {
+                left: 0,
+                top: sep_bot,
+                right: w as i32,
+                bottom: sep_bot + 1,
+            },
+            sep,
+        );
+        DeleteObject(sep as _);
+
+        // Body font.
+        let face_w: Vec<u16> = OsStr::new(FONT_FACE)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let body_font = CreateFontW(
+            -font_h,
+            0,
+            0,
+            0,
+            FW_NORMAL as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_SWISS) as u32,
+            face_w.as_ptr(),
+        );
+        let old_font = SelectObject(mem_dc, body_font as _);
+        SetBkMode(mem_dc, TRANSPARENT as i32);
+        let mut tm: TEXTMETRICW = std::mem::zeroed();
+        GetTextMetricsW(mem_dc, &mut tm);
+
+        // Header.
+        let header_font = CreateFontW(
+            -((font_h * 12) / 10),
+            0,
+            0,
+            0,
+            FW_BOLD as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_SWISS) as u32,
+            face_w.as_ptr(),
+        );
+        SelectObject(mem_dc, header_font as _);
+        let mut tm_h: TEXTMETRICW = std::mem::zeroed();
+        GetTextMetricsW(mem_dc, &mut tm_h);
+        let header = match lang() {
+            Lang::Pl => "Ustawienia",
+            Lang::En => "Settings",
+        };
+        draw_segment(
+            mem_dc,
+            SETTINGS_PAD_X,
+            (SETTINGS_HEADER_H - tm_h.tmHeight) / 2,
+            header,
+            theme.text,
+        );
+        SelectObject(mem_dc, body_font as _);
+        DeleteObject(header_font as _);
+
+        // Rows: label + spinner.
+        let labels: [&str; 3] = match lang() {
+            Lang::Pl => [
+                "Margines prawy",
+                "Rozmiar czcionki",
+                "Rozmiar ikon",
+            ],
+            Lang::En => [
+                "Right margin",
+                "Font size",
+                "Icon size",
+            ],
+        };
+        let values: [i32; 3] = [draft.right_margin, draft.font_h, draft.icon_d];
+
+        for row in 0..3usize {
+            let y_top = SETTINGS_HEADER_H + (row as i32) * SETTINGS_ROW_H;
+            // Label.
+            let label_y = y_top + (SETTINGS_ROW_H - tm.tmHeight) / 2;
+            draw_segment(mem_dc, SETTINGS_PAD_X, label_y, labels[row], theme.text);
+            // Spinner rects.
+            let w_i32 = w as i32;
+            let plus_x = w_i32 - SETTINGS_PAD_X - SPIN_BTN;
+            let val_x = plus_x - SPIN_VAL_W;
+            let minus_x = val_x - SPIN_BTN;
+            let btn_y = y_top + (SETTINGS_ROW_H - SPIN_BTN) / 2;
+
+            // Minus / Plus buttons (filled rects with border).
+            for &(bx, sym) in &[(minus_x, "−"), (plus_x, "+")] {
+                let brush = CreateSolidBrush(rgb_to_colorref(btn_bg));
+                FillRect(
+                    mem_dc,
+                    &RECT {
+                        left: bx,
+                        top: btn_y,
+                        right: bx + SPIN_BTN,
+                        bottom: btn_y + SPIN_BTN,
+                    },
+                    brush,
+                );
+                DeleteObject(brush as _);
+                // Border lines drawn directly to DIB pixels (Bresenham).
+                let dib_mut = std::slice::from_raw_parts_mut(
+                    dib_bits as *mut u32,
+                    pixel_count,
+                );
+                draw_line(
+                    dib_mut, wu, hu,
+                    bx, btn_y, bx + SPIN_BTN - 1, btn_y, border,
+                );
+                draw_line(
+                    dib_mut, wu, hu,
+                    bx, btn_y + SPIN_BTN - 1, bx + SPIN_BTN - 1, btn_y + SPIN_BTN - 1, border,
+                );
+                draw_line(
+                    dib_mut, wu, hu,
+                    bx, btn_y, bx, btn_y + SPIN_BTN - 1, border,
+                );
+                draw_line(
+                    dib_mut, wu, hu,
+                    bx + SPIN_BTN - 1, btn_y, bx + SPIN_BTN - 1, btn_y + SPIN_BTN - 1, border,
+                );
+                // Symbol centered.
+                let sym_w: Vec<u16> = sym.encode_utf16().collect();
+                let mut sz: windows_sys::Win32::Foundation::SIZE = std::mem::zeroed();
+                windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W(
+                    mem_dc,
+                    sym_w.as_ptr(),
+                    sym_w.len() as i32,
+                    &mut sz,
+                );
+                let sx = bx + (SPIN_BTN - sz.cx) / 2;
+                let sy = btn_y + (SPIN_BTN - sz.cy) / 2;
+                draw_segment(mem_dc, sx, sy, sym, theme.text);
+            }
+
+            // Value text centered in val_x..val_x+SPIN_VAL_W. " px" suffix.
+            let val_text = format!("{} px", values[row]);
+            let val_w_v: Vec<u16> = val_text.encode_utf16().collect();
+            let mut sz: windows_sys::Win32::Foundation::SIZE = std::mem::zeroed();
+            windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W(
+                mem_dc,
+                val_w_v.as_ptr(),
+                val_w_v.len() as i32,
+                &mut sz,
+            );
+            let vx = val_x + (SPIN_VAL_W - sz.cx) / 2;
+            let vy = btn_y + (SPIN_BTN - sz.cy) / 2;
+            draw_segment(mem_dc, vx, vy, &val_text, theme.text);
+        }
+
+        // Footer: Reset (left of OK) + OK.
+        let btn_y = h as i32 - SETTINGS_FOOTER_H + (SETTINGS_FOOTER_H - 32) / 2;
+        let ok_w = 90;
+        let ok_x = w as i32 - SETTINGS_PAD_X - ok_w;
+        let reset_w = 90;
+        let reset_x = ok_x - 12 - reset_w;
+        // OK in theme.up (primary).
+        let ok_brush = CreateSolidBrush(rgb_to_colorref(theme.up));
+        FillRect(
+            mem_dc,
+            &RECT {
+                left: ok_x,
+                top: btn_y,
+                right: ok_x + ok_w,
+                bottom: btn_y + 32,
+            },
+            ok_brush,
+        );
+        DeleteObject(ok_brush as _);
+        // Reset as secondary (btn_bg with border).
+        let reset_brush = CreateSolidBrush(rgb_to_colorref(btn_bg));
+        FillRect(
+            mem_dc,
+            &RECT {
+                left: reset_x,
+                top: btn_y,
+                right: reset_x + reset_w,
+                bottom: btn_y + 32,
+            },
+            reset_brush,
+        );
+        DeleteObject(reset_brush as _);
+
+        // Labels for buttons.
+        let ok_label = "OK";
+        let reset_label = match lang() {
+            Lang::Pl => "Domyślne",
+            Lang::En => "Reset",
+        };
+        for (label, bx, bw, color) in [
+            (ok_label, ok_x, ok_w, 0x00_FF_FF_FFu32),
+            (reset_label, reset_x, reset_w, theme.text),
+        ] {
+            let lw: Vec<u16> = label.encode_utf16().collect();
+            let mut sz: windows_sys::Win32::Foundation::SIZE = std::mem::zeroed();
+            windows_sys::Win32::Graphics::Gdi::GetTextExtentPoint32W(
+                mem_dc,
+                lw.as_ptr(),
+                lw.len() as i32,
+                &mut sz,
+            );
+            let lx = bx + (bw - sz.cx) / 2;
+            let ly = btn_y + (32 - sz.cy) / 2;
+            draw_segment(mem_dc, lx, ly, label, color);
+        }
+
+        // Copy DIB → buffer.
+        let dib_slice = std::slice::from_raw_parts(dib_bits as *const u32, pixel_count);
+        if buffer.len() >= pixel_count {
+            buffer[..pixel_count].copy_from_slice(dib_slice);
+        }
+
+        SelectObject(mem_dc, old_font);
+        SelectObject(mem_dc, old_dib);
+        DeleteObject(body_font as _);
+        DeleteObject(dib as _);
+        DeleteDC(mem_dc);
+    }
+}
+
 // ----------------------------------------------------------------------------
 
 fn main() {
@@ -2099,12 +2714,17 @@ fn main() {
 
     let widget_height_px: u32 =
         (taskbar_thickness - HEIGHT_REDUCTION_PX).max(20) as u32;
-    let font_h: i32 = ((widget_height_px as f32) * 0.50)
-        .round()
-        .clamp(11.0, 24.0) as i32;
     let mut show_charts: bool = load_show_charts();
+
+    // User-tunable settings (right margin / font height / icon diameter).
+    // Defaults proportional to the widget height; overridden by anything in
+    // %APPDATA%\CryptoTray\settings.txt. Each becomes a mutable runtime
+    // variable so the Settings dialog can adjust them on the fly.
+    let mut settings = load_settings(widget_height_px);
+    let mut font_h: i32 = settings.font_h;
+    let mut icon_d_px: u32 = settings.icon_d as u32;
+    let mut right_margin: i32 = settings.right_margin;
     let widget_width_px: u32 = compute_widget_width(enabled_coins.len(), show_charts);
-    let icon_d_px = ((widget_height_px as i32) * 7 / 10).max(20) as u32;
 
     // Load real coin icons (cached in %APPDATA%\CryptoTray\icons; fetched
     // from CoinGecko on first run or whenever cache is missing).
@@ -2157,6 +2777,12 @@ fn main() {
     };
     let item_choose_coins = MenuItem::new(label_choose_coins, true, None);
 
+    let label_settings = match lang() {
+        Lang::Pl => "Ustawienia...",
+        Lang::En => "Settings...",
+    };
+    let item_settings = MenuItem::new(label_settings, true, None);
+
     let sep2 = PredefinedMenuItem::separator();
     let item_charts = CheckMenuItem::new(label_charts, true, show_charts, None);
     let item_refresh_icons = MenuItem::new(label_refresh_icons, true, None);
@@ -2173,6 +2799,7 @@ fn main() {
         &item_refresh,
         &sep1,
         &item_choose_coins,
+        &item_settings,
         &sep2,
         &item_charts,
         &item_refresh_icons,
@@ -2188,6 +2815,7 @@ fn main() {
     let id_show = item_show.id().clone();
     let id_refresh = item_refresh.id().clone();
     let id_choose_coins = item_choose_coins.id().clone();
+    let id_settings = item_settings.id().clone();
     let id_charts = item_charts.id().clone();
     let id_refresh_icons = item_refresh_icons.id().clone();
     let id_check_update = item_check_update.id().clone();
@@ -2234,7 +2862,7 @@ fn main() {
         let ms = monitor.size();
         let screen_right = mp.x + ms.width as i32;
         let screen_bottom = mp.y + ms.height as i32;
-        let x = screen_right - widget_width_px as i32 - RIGHT_MARGIN_PX;
+        let x = screen_right - widget_width_px as i32 - right_margin;
         let y = screen_bottom - widget_height_px as i32;
         let hwnd = widget.hwnd();
         unsafe {
@@ -2263,6 +2891,13 @@ fn main() {
     // CursorMoved events with position, and MouseInput events without — we
     // remember the last cursor position to know where the click happened).
     let mut picker_cursor: PhysicalPosition<f64> = PhysicalPosition::new(0.0, 0.0);
+
+    // Settings window — same pattern as the picker.
+    let settings_result: SettingsResult = Arc::new(Mutex::new(None));
+    let mut settings_window =
+        SettingsWindow::new(&event_loop, settings_result.clone(), settings);
+    let settings_id = settings_window.id();
+    let mut settings_cursor: PhysicalPosition<f64> = PhysicalPosition::new(0.0, 0.0);
 
     let menu_channel = MenuEvent::receiver();
     let tray_channel = TrayIconEvent::receiver();
@@ -2410,6 +3045,33 @@ fn main() {
             Event::RedrawRequested(window_id) if *window_id == picker_id => {
                 picker.render(theme, is_dark, font_h);
             }
+            // --- settings window events --------------------------------------
+            Event::WindowEvent {
+                event: window_event,
+                window_id,
+                ..
+            } if *window_id == settings_id => match window_event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    settings_cursor = *position;
+                }
+                WindowEvent::MouseInput {
+                    state: btn_state,
+                    button: TaoMouseButton::Left,
+                    ..
+                } if *btn_state == ElementState::Pressed => {
+                    settings_window.handle_click(
+                        settings_cursor.x as i32,
+                        settings_cursor.y as i32,
+                    );
+                }
+                WindowEvent::CloseRequested => {
+                    settings_window.close_cancel();
+                }
+                _ => {}
+            },
+            Event::RedrawRequested(window_id) if *window_id == settings_id => {
+                settings_window.render(theme, is_dark, font_h);
+            }
             _ => {}
         }
 
@@ -2445,6 +3107,61 @@ fn main() {
                 }
             };
             resize_after_picker(compute_widget_width(enabled_coins.len(), show_charts));
+            widget.request_redraw();
+        }
+
+        // Apply a Settings dialog save: persist to disk, update runtime
+        // values, rebuild icons at the new size, reposition the widget.
+        let new_settings_opt: Option<Settings> =
+            settings_result.lock().ok().and_then(|mut g| g.take());
+        if let Some(new_settings) = new_settings_opt {
+            let icon_changed = new_settings.icon_d != settings.icon_d;
+            let margin_changed = new_settings.right_margin != settings.right_margin;
+            settings = new_settings;
+            save_settings(&settings);
+            font_h = settings.font_h;
+            right_margin = settings.right_margin;
+            if icon_changed {
+                icon_d_px = settings.icon_d as u32;
+                icons = load_icons(icon_d_px);
+            }
+            if margin_changed || icon_changed {
+                // Recompute width + x using the new right margin.
+                let new_width = compute_widget_width(enabled_coins.len(), show_charts);
+                let cur_pos = widget
+                    .outer_position()
+                    .unwrap_or(PhysicalPosition::new(0, 0));
+                let cur_size = widget.outer_size();
+                let (target_x, target_y) = if margin_changed {
+                    // Snap to anchor: screen_right - new_width - right_margin.
+                    if let Some(monitor) = widget.current_monitor() {
+                        let mp = monitor.position();
+                        let ms = monitor.size();
+                        let sr = mp.x + ms.width as i32;
+                        (sr - new_width as i32 - right_margin, cur_pos.y)
+                    } else {
+                        (cur_pos.x, cur_pos.y)
+                    }
+                } else {
+                    // Just resized — keep right edge fixed.
+                    let right = cur_pos.x + cur_size.width as i32;
+                    (right - new_width as i32, cur_pos.y)
+                };
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+                };
+                unsafe {
+                    SetWindowPos(
+                        widget.hwnd() as *mut std::ffi::c_void,
+                        std::ptr::null_mut(),
+                        target_x,
+                        target_y,
+                        new_width as i32,
+                        cur_size.height as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
             widget.request_redraw();
         }
 
@@ -2501,6 +3218,9 @@ fn main() {
                 );
             } else if ev.id == id_choose_coins {
                 picker.open(&enabled_coins);
+            } else if ev.id == id_settings {
+                let defaults = Settings::defaults_for(widget_height_px);
+                settings_window.open(settings, defaults);
             } else if ev.id == id_charts {
                 show_charts = !show_charts;
                 item_charts.set_checked(show_charts);
