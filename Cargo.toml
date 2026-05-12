@@ -1,0 +1,29 @@
+[package]
+name = "crypto-tray"
+version = "0.1.0"
+edition = "2021"
+description = "Tray BTC ticker for Windows"
+
+[dependencies]
+tray-icon = "0.19"
+tao = "0.30"
+ureq = { version = "2", features = ["json", "tls"] }
+serde = { version = "1", features = ["derive"] }
+softbuffer = "0.4"
+png = "0.17"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_Graphics_Gdi",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
