@@ -1917,7 +1917,7 @@ const PICKER_FOOTER_H: i32 = 56;
 const PICKER_ROW_H: i32 = 30;
 const PICKER_PAD_X: i32 = 14;
 const PICKER_CHECKBOX: i32 = 18;
-const PICKER_TICKER_W: i32 = 60;
+const PICKER_TICKER_W: i32 = 80;
 /// y-coordinate where the scrollable list area starts.
 const PICKER_LIST_TOP: i32 = PICKER_HEADER_H + PICKER_SEARCH_H;
 
@@ -1943,6 +1943,14 @@ struct Picker {
     hover_index: Option<usize>,
     visible: bool,
     pending_result: PickerResult,
+    /// Reference point for the blinking search-bar caret. Reset on open and
+    /// on every keystroke so the caret is solid-visible right after the user
+    /// interacts, then settles into a 500 ms blink cycle.
+    last_caret_reset: Instant,
+    /// Last visibility state we rendered with — used by the main event loop
+    /// to decide whether the next 200 ms tick needs to trigger a redraw or
+    /// can skip it (so a stationary picker doesn't spam GDI on every tick).
+    last_caret_on: bool,
 }
 
 impl Picker {
@@ -1981,7 +1989,15 @@ impl Picker {
             hover_index: None,
             visible: false,
             pending_result,
+            last_caret_reset: Instant::now(),
+            last_caret_on: true,
         }
+    }
+
+    /// Whether the search-bar caret should be drawn this frame. Toggles
+    /// every 500 ms after the last keystroke (or open()).
+    fn caret_on(&self) -> bool {
+        (self.last_caret_reset.elapsed().as_millis() / 500) % 2 == 0
     }
 
     fn id(&self) -> tao::window::WindowId {
@@ -1994,6 +2010,8 @@ impl Picker {
         self.search.clear();
         self.update_filter();
         self.hover_index = None;
+        self.last_caret_reset = Instant::now();
+        self.last_caret_on = true;
         self.window.set_visible(true);
         self.visible = true;
         // Pull to front in case it's already on screen behind something.
@@ -2035,6 +2053,7 @@ impl Picker {
         }
         if changed {
             self.scroll = 0;
+            self.last_caret_reset = Instant::now();
             self.update_filter();
             self.window.request_redraw();
         }
@@ -2043,6 +2062,7 @@ impl Picker {
     fn search_backspace(&mut self) {
         if self.search.pop().is_some() {
             self.scroll = 0;
+            self.last_caret_reset = Instant::now();
             self.update_filter();
             self.window.request_redraw();
         }
@@ -2052,6 +2072,7 @@ impl Picker {
         if !self.search.is_empty() {
             self.search.clear();
             self.scroll = 0;
+            self.last_caret_reset = Instant::now();
             self.update_filter();
             self.window.request_redraw();
         }
@@ -2154,6 +2175,10 @@ impl Picker {
         let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
             return;
         };
+        // Compute caret state before the mutable buffer borrow — calling
+        // self.caret_on() while `self.surface.buffer_mut()` is alive would
+        // trip the borrow checker (immutable + mutable on the same self).
+        let caret = self.caret_on();
         if self.surface.resize(nz_w, nz_h).is_err() {
             return;
         }
@@ -2169,6 +2194,7 @@ impl Picker {
             &self.filtered,
             self.scroll,
             self.hover_index,
+            caret,
             theme,
             is_dark,
             font_h,
@@ -2187,6 +2213,7 @@ fn render_picker_dib(
     filtered: &[usize],
     scroll: i32,
     hover_index: Option<usize>,
+    caret_on: bool,
     theme: Theme,
     is_dark: bool,
     font_h: i32,
@@ -2403,13 +2430,17 @@ fn render_picker_dib(
             }
         }
 
-        // Font for the body text (ticker + name).
+        // Font for the body text (ticker + name). Picker body font ~85% of
+        // widget font — gives tickers like WMATIC / STETH enough room before
+        // the name column and keeps the long catalog list readable at small
+        // picker sizes.
         let face_w: Vec<u16> = OsStr::new(FONT_FACE)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
+        let picker_font_h = ((font_h * 85) / 100).max(11);
         let body_font = CreateFontW(
-            -font_h,
+            -picker_font_h,
             0,
             0,
             0,
@@ -2468,8 +2499,14 @@ fn render_picker_dib(
             };
             draw_segment(mem_dc, search_x0 + 10, search_text_y, placeholder, dim);
         } else {
-            let with_caret = format!("{search}|");
-            draw_segment(mem_dc, search_x0 + 10, search_text_y, &with_caret, row_text);
+            // Draw query and a blinking pipe caret. `caret_on` toggles every
+            // 500 ms (driven by the main event loop polling picker.caret_on()).
+            let displayed = if caret_on {
+                format!("{search}|")
+            } else {
+                search.to_string()
+            };
+            draw_segment(mem_dc, search_x0 + 10, search_text_y, &displayed, row_text);
             // Match count on the right side of the search bar.
             let count_msg = match lang() {
                 Lang::Pl => format!("{} wyników", filtered.len()),
@@ -3340,6 +3377,17 @@ fn main() {
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(200));
 
+        // Picker caret blink — redraw only when the on/off state actually
+        // changes since the last tick, so a static picker doesn't get a
+        // redraw every 200 ms tick.
+        if picker.visible && !picker.search.is_empty() {
+            let now_on = picker.caret_on();
+            if now_on != picker.last_caret_on {
+                picker.last_caret_on = now_on;
+                picker.window.request_redraw();
+            }
+        }
+
         if last_raise.elapsed() >= Duration::from_millis(500) {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
                 HWND_TOPMOST, SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -3464,15 +3512,15 @@ fn main() {
                         picker.handle_scroll(lines);
                     }
                 }
-                WindowEvent::ReceivedImeText(text) => {
-                    picker.search_append(text);
-                }
                 WindowEvent::KeyboardInput { event: key_event, .. }
                     if key_event.state == ElementState::Pressed =>
                 {
                     use tao::keyboard::Key;
-                    // For text input, prefer the `text` field — it accounts for
-                    // shift/dead keys/IME composition properly.
+                    // KeyEvent.text already accounts for shift / dead keys /
+                    // IME composition. Earlier we *also* handled
+                    // ReceivedImeText, which Windows fires alongside
+                    // KeyboardInput for printable characters — that caused
+                    // the first keystroke to register twice. One source only.
                     if let Some(ref txt) = key_event.text {
                         picker.search_append(txt);
                     }
