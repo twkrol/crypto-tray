@@ -678,7 +678,18 @@ fn download_url(url: &str) -> Option<Vec<u8>> {
 
 fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let cursor = std::io::Cursor::new(bytes);
-    let decoder = png::Decoder::new(cursor);
+    let mut decoder = png::Decoder::new(cursor);
+    // Let png crate normalise every input variant to 8-bit RGBA for us:
+    //   EXPAND   -> palette/indexed -> RGB, grayscale -> 8-bit, tRNS -> alpha
+    //   ALPHA    -> append a fully-opaque alpha channel if the source lacks one
+    //   STRIP_16 -> down-convert 16-bit channels to 8-bit
+    // This is what was failing on the Kaspa icon before: CoinGecko's hosted
+    // PNG is palette-indexed, and our hand-rolled fallback rejected it.
+    decoder.set_transformations(
+        png::Transformations::EXPAND
+            | png::Transformations::ALPHA
+            | png::Transformations::STRIP_16,
+    );
     let mut info_reader = decoder.read_info().ok()?;
     let (w, h, color_type) = {
         let info = info_reader.info();
@@ -688,6 +699,9 @@ fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut buf = vec![0u8; info_reader.output_buffer_size()];
     info_reader.next_frame(&mut buf).ok()?;
 
+    // After the transformations above the output is virtually always RGBA,
+    // but keep the per-variant conversions as a belt-and-suspenders fallback
+    // for png crate edge cases.
     let rgba = match color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => {
@@ -1406,6 +1420,7 @@ fn render_widget(
     theme: Theme,
     is_dark: bool,
     font_h: i32,
+    icon_d: i32,
 ) {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
@@ -1513,7 +1528,9 @@ fn render_widget(
             _ => None,
         };
 
-        let icon_d = ((h as i32) * 7 / 10).max(20);
+        // icon_d is now the user-tunable Settings value, taken as a parameter
+        // — was previously computed from widget height, which got out of sync
+        // with the actual cached icon size after the Settings dialog landed.
         let icon_radius = (icon_d as f32) / 2.0;
         let cy = (h as i32) / 2;
         let chart_w: i32 = 50;
@@ -2999,6 +3016,7 @@ fn main() {
                                 theme,
                                 is_dark,
                                 font_h,
+                                icon_d_px as i32,
                             );
                             let _ = buffer.present();
                         }
